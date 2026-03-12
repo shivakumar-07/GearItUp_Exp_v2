@@ -22,4 +22,5 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
-repomix-output.xml 
+repomix-output.xml
+.vite
