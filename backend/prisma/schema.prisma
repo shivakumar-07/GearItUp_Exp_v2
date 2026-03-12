@@ -1,0 +1,262 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Vehicle {
+  vehicleId    String   @id @default(uuid()) @map("vehicle_id")
+  make         String
+  model        String
+  variant      String?
+  yearFrom     Int      @map("year_from")
+  yearTo       Int?     @map("year_to")
+  fuelType     String?  @map("fuel_type")
+  engineCc     Int?     @map("engine_cc")
+  engineCode   String?  @map("engine_code")
+  transmission String?
+  bodyType     String?  @map("body_type")
+  fitments     PartFitment[]
+
+  @@map("vehicles")
+}
+
+model MasterPart {
+  masterPartId String   @id @default(uuid()) @map("master_part_id")
+  oemNumber    String?  @map("oem_number")
+  partName     String   @map("part_name")
+  brand        String?
+  categoryL1   String?  @map("category_l1")
+  categoryL2   String?  @map("category_l2")
+  hsnCode      String?  @map("hsn_code")
+  gstRate      Decimal  @default(18.00) @map("gst_rate")
+  unitOfSale   String   @default("Piece") @map("unit_of_sale")
+  description  String?
+  imageUrl     String?  @map("image_url")
+  status       String   @default("PENDING") // VERIFIED, PENDING, REJECTED
+  source       String   @default("MANUAL")  // SUPPLIER, CONTRIBUTED, LICENSED
+  createdAt    DateTime @default(now()) @map("created_at")
+  fitments     PartFitment[]
+  inventory    ShopInventory[]
+
+  @@map("master_parts")
+}
+
+model PartFitment {
+  fitmentId    String     @id @default(uuid()) @map("fitment_id")
+  masterPartId String     @map("master_part_id")
+  vehicleId    String     @map("vehicle_id")
+  fitType      String     @map("fit_type") // EXACT, COMPATIBLE, UNIVERSAL
+  notes        String?
+  masterPart   MasterPart @relation(fields: [masterPartId], references: [masterPartId])
+  vehicle      Vehicle    @relation(fields: [vehicleId], references: [vehicleId])
+
+  @@map("part_fitments")
+}
+
+model Shop {
+  shopId      String   @id @default(uuid()) @map("shop_id")
+  name        String
+  ownerName   String?  @map("owner_name")
+  phone       String   @unique
+  gstin       String?
+  address     String?
+  city        String?
+  pincode     String?
+  latitude    Decimal? @db.Decimal(9, 6)
+  longitude   Decimal? @db.Decimal(9, 6)
+  isActive    Boolean  @default(true) @map("is_active")
+  createdAt   DateTime @default(now()) @map("created_at")
+  inventory   ShopInventory[]
+  movements   Movement[]
+  invoices    Invoice[]
+  parties     Party[]
+  users       User[]
+
+  @@map("shops")
+}
+
+model User {
+  userId        String    @id @default(uuid()) @map("user_id")
+  firebaseUid   String?   @unique @map("firebase_uid")  // Firebase Auth UID
+  phone         String?   @unique
+  email         String?   @unique
+  name          String?
+  avatarUrl     String?   @map("avatar_url")
+  role          String    @default("CUSTOMER") // SHOP_OWNER, CUSTOMER, PLATFORM_ADMIN
+  shopId        String?   @map("shop_id")
+  shop          Shop?     @relation(fields: [shopId], references: [shopId])
+  isActive      Boolean   @default(true) @map("is_active")
+  createdAt     DateTime  @default(now()) @map("created_at")
+  lastLoginAt   DateTime? @map("last_login_at")
+
+  @@map("users")
+}
+
+model OtpCode {
+  id        String   @id @default(uuid())
+  phone     String
+  code      String
+  expiresAt DateTime @map("expires_at")
+  used      Boolean  @default(false)
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@map("otp_codes")
+}
+
+model ShopInventory {
+  inventoryId         String   @id @default(uuid()) @map("inventory_id")
+  shopId              String   @map("shop_id")
+  masterPartId        String   @map("master_part_id")
+  sellingPrice        Decimal  @map("selling_price") @db.Decimal(10, 2)
+  buyingPrice         Decimal? @map("buying_price") @db.Decimal(10, 2)
+  stockQty            Int      @default(0) @map("stock_qty")
+  reservedQty         Int      @default(0) @map("reserved_qty")
+  minStockAlert       Int      @default(5) @map("min_stock_alert")
+  rackLocation        String?  @map("rack_location")
+  isMarketplaceListed Boolean  @default(false) @map("is_marketplace_listed")
+  shop                Shop     @relation(fields: [shopId], references: [shopId])
+  masterPart          MasterPart @relation(fields: [masterPartId], references: [masterPartId])
+  movements           Movement[]
+  invoiceItems        InvoiceItem[]
+
+  @@unique([shopId, masterPartId])
+  @@map("shop_inventory")
+}
+
+model Movement {
+  movementId   String   @id @default(uuid()) @map("movement_id")
+  shopId       String   @map("shop_id")
+  inventoryId  String   @map("inventory_id")
+  type         String   // PURCHASE, SALE, RETURN_IN, RETURN_OUT, DAMAGE, THEFT, ADJUSTMENT, OPENING
+  qty          Int
+  unitPrice    Decimal? @map("unit_price") @db.Decimal(10, 2)
+  totalAmount  Decimal? @map("total_amount") @db.Decimal(10, 2)
+  gstAmount    Decimal? @map("gst_amount") @db.Decimal(10, 2)
+  profit       Decimal? @db.Decimal(10, 2)
+  invoiceId    String?  @map("invoice_id")
+  partyId      String?  @map("party_id")
+  notes        String?
+  createdAt    DateTime @default(now()) @map("created_at")
+  shop         Shop     @relation(fields: [shopId], references: [shopId])
+  inventory    ShopInventory @relation(fields: [inventoryId], references: [inventoryId])
+
+  @@map("movements")
+}
+
+model Invoice {
+  invoiceId     String   @id @default(uuid()) @map("invoice_id")
+  invoiceNumber String   @unique @map("invoice_number") // YYYYMM-0001 format
+  shopId        String   @map("shop_id")
+  partyId       String?  @map("party_id")
+  partyName     String?  @map("party_name")
+  partyPhone    String?  @map("party_phone")
+  partyGstin    String?  @map("party_gstin")
+  subtotal      Decimal  @db.Decimal(10, 2)
+  discountAmount Decimal @default(0) @map("discount_amount") @db.Decimal(10, 2)
+  taxableAmount Decimal  @map("taxable_amount") @db.Decimal(10, 2)
+  cgst          Decimal  @db.Decimal(10, 2)
+  sgst          Decimal  @db.Decimal(10, 2)
+  igst          Decimal  @default(0) @db.Decimal(10, 2)
+  totalAmount   Decimal  @map("total_amount") @db.Decimal(10, 2)
+  paymentMode   String   @map("payment_mode") // CASH, UPI, CREDIT, SPLIT
+  cashAmount    Decimal? @map("cash_amount") @db.Decimal(10, 2)
+  upiAmount     Decimal? @map("upi_amount") @db.Decimal(10, 2)
+  creditAmount  Decimal? @map("credit_amount") @db.Decimal(10, 2)
+  pdfUrl        String?  @map("pdf_url")
+  status        String   @default("PAID") // PAID, CREDIT, CANCELLED
+  notes         String?
+  createdAt     DateTime @default(now()) @map("created_at")
+  shop          Shop     @relation(fields: [shopId], references: [shopId])
+  party         Party?   @relation(fields: [partyId], references: [partyId])
+  items         InvoiceItem[]
+
+  @@map("invoices")
+}
+
+model InvoiceItem {
+  itemId       String   @id @default(uuid()) @map("item_id")
+  invoiceId    String   @map("invoice_id")
+  inventoryId  String   @map("inventory_id")
+  partName     String   @map("part_name")
+  hsnCode      String?  @map("hsn_code")
+  qty          Int
+  unitPrice    Decimal  @map("unit_price") @db.Decimal(10, 2)
+  discount     Decimal  @default(0) @db.Decimal(10, 2)
+  taxableAmt   Decimal  @map("taxable_amt") @db.Decimal(10, 2)
+  gstRate      Decimal  @map("gst_rate") @db.Decimal(5, 2)
+  cgst         Decimal  @db.Decimal(10, 2)
+  sgst         Decimal  @db.Decimal(10, 2)
+  total        Decimal  @db.Decimal(10, 2)
+  invoice      Invoice  @relation(fields: [invoiceId], references: [invoiceId])
+  inventory    ShopInventory @relation(fields: [inventoryId], references: [inventoryId])
+
+  @@map("invoice_items")
+}
+
+model Party {
+  partyId       String   @id @default(uuid()) @map("party_id")
+  shopId        String   @map("shop_id")
+  name          String
+  phone         String?
+  gstin         String?
+  address       String?
+  type          String   @default("CUSTOMER") // CUSTOMER, SUPPLIER, BOTH
+  creditLimit   Decimal  @default(0) @map("credit_limit") @db.Decimal(10, 2)
+  outstanding   Decimal  @default(0) @db.Decimal(10, 2) // cached, recompute from movements
+  notes         String?
+  isActive      Boolean  @default(true) @map("is_active")
+  createdAt     DateTime @default(now()) @map("created_at")
+  shop          Shop     @relation(fields: [shopId], references: [shopId])
+  invoices      Invoice[]
+
+  @@map("parties")
+}
+
+model MarketplaceOrder {
+  orderId        String   @id @default(uuid()) @map("order_id")
+  orderNumber    String   @unique @map("order_number")
+  customerId     String?  @map("customer_id")
+  customerPhone  String   @map("customer_phone")
+  customerName   String?  @map("customer_name")
+  shopId         String   @map("shop_id")
+  subtotal       Decimal  @db.Decimal(10, 2)
+  deliveryFee    Decimal  @default(0) @map("delivery_fee") @db.Decimal(10, 2)
+  total          Decimal  @db.Decimal(10, 2)
+  deliveryAddress String? @map("delivery_address")
+  status         String   @default("PENDING") // PENDING, CONFIRMED, PACKED, DISPATCHED, DELIVERED, CANCELLED
+  razorpayOrderId String? @map("razorpay_order_id")
+  razorpayPaymentId String? @map("razorpay_payment_id")
+  notes          String?
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+  items          MarketplaceOrderItem[]
+
+  @@map("marketplace_orders")
+}
+
+model MarketplaceOrderItem {
+  itemId       String   @id @default(uuid()) @map("item_id")
+  orderId      String   @map("order_id")
+  inventoryId  String   @map("inventory_id")
+  partName     String   @map("part_name")
+  qty          Int
+  unitPrice    Decimal  @map("unit_price") @db.Decimal(10, 2)
+  total        Decimal  @db.Decimal(10, 2)
+  order        MarketplaceOrder @relation(fields: [orderId], references: [orderId])
+
+  @@map("marketplace_order_items")
+}
+
+model RefreshToken {
+  id        String   @id @default(uuid())
+  userId    String   @map("user_id")
+  token     String   @unique
+  expiresAt DateTime @map("expires_at")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@map("refresh_tokens")
+}

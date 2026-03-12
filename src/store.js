@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, createContext, useContext } from "react";
 import { SEED_PRODUCTS, SEED_SHOPS, genSeededMovements, SEED_ORDERS, SEED_PURCHASES, SEED_PARTIES, SEED_VEHICLES, SEED_JOB_CARDS, uid } from "./utils";
+import { fetchInventory, fetchParties, syncProductSave } from "./api/sync.js";
 
 export const StoreContext = createContext(null);
 
@@ -24,6 +25,35 @@ export function useStoreProvider() {
     const [marketplacePage, setMarketplacePage] = useState("home");
 
     const [loaded, setL] = useState(false);
+    const [apiSynced, setApiSynced] = useState(false);
+
+    const syncFromAPI = async () => {
+        try {
+            const { getAccessToken } = await import('./api/client.js');
+            if (!getAccessToken()) return; // Not logged in, skip
+
+            const [apiProducts, apiParties] = await Promise.all([
+                fetchInventory(),
+                fetchParties(),
+            ]);
+
+            if (apiProducts && apiProducts.length > 0) {
+                setP(apiProducts);
+                try { localStorage.setItem("vl_products", JSON.stringify(apiProducts)); } catch {}
+                console.log(`[Store] Synced ${apiProducts.length} products from API`);
+            }
+
+            if (apiParties && apiParties.length > 0) {
+                setParties(apiParties);
+                try { localStorage.setItem("vl_parties", JSON.stringify(apiParties)); } catch {}
+                console.log(`[Store] Synced ${apiParties.length} parties from API`);
+            }
+
+            setApiSynced(true);
+        } catch (err) {
+            console.warn('[Store] API sync error:', err.message);
+        }
+    };
 
     useEffect(() => {
         (async () => {
@@ -69,18 +99,32 @@ export function useStoreProvider() {
                 setJobCards(SEED_JOB_CARDS);
             }
             setL(true);
+
+            // Background API sync (don't block UI)
+            syncFromAPI().catch(err => console.warn('[Store] API sync failed:', err));
         })();
     }, []);
 
     // Persistence helpers
     const saveShops = useCallback(d => { setShops(d); try { localStorage.setItem("vl_shops", JSON.stringify(d)); } catch { } }, []);
-    const saveProducts = useCallback(d => { setP(d); try { localStorage.setItem("vl_products", JSON.stringify(d)); } catch { } }, []);
+    const saveProducts = useCallback(d => {
+        setP(d);
+        try { localStorage.setItem("vl_products", JSON.stringify(d)); } catch { }
+        // Background sync: if only one product changed, sync it to the API
+        if (d.length === products?.length) {
+            const changed = d.find((p, i) => p !== products?.[i]);
+            if (changed) syncProductSave(changed).catch(() => {});
+        }
+    }, [products]);
     const saveMovements = useCallback(d => { setM(d); try { localStorage.setItem("vl_movements", JSON.stringify(d)); } catch { } }, []);
     const saveOrders = useCallback(d => { setOrders(d); try { localStorage.setItem("vl_orders", JSON.stringify(d)); } catch { } }, []);
     const savePurchases = useCallback(d => { setPurchases(d); try { localStorage.setItem("vl_purchases", JSON.stringify(d)); } catch { } }, []);
     const saveAuditLog = useCallback(d => { setAuditLog(d); try { localStorage.setItem("vl_auditLog", JSON.stringify(d)); } catch { } }, []);
     const saveReceipts = useCallback(d => { setReceipts(d); try { localStorage.setItem("vl_receipts", JSON.stringify(d)); } catch { } }, []);
-    const saveParties = useCallback(d => { setParties(d); try { localStorage.setItem("vl_parties", JSON.stringify(d)); } catch { } }, []);
+    const saveParties = useCallback(d => {
+        setParties(d);
+        try { localStorage.setItem("vl_parties", JSON.stringify(d)); } catch { }
+    }, []);
     const saveVehicles = useCallback(d => { setVehicles(d); try { localStorage.setItem("vl_vehicles", JSON.stringify(d)); } catch { } }, []);
     const saveJobCards = useCallback(d => { setJobCards(d); try { localStorage.setItem("vl_jobCards", JSON.stringify(d)); } catch { } }, []);
 
@@ -135,7 +179,7 @@ export function useStoreProvider() {
         appMode, saveAppMode,
         activeShopId, setActiveShopId,
         marketplacePage, setMarketplacePage,
-        logAudit, resetAll, loaded
+        logAudit, resetAll, loaded, apiSynced
     };
 }
 

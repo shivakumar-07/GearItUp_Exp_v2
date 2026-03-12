@@ -2,6 +2,8 @@ import { useState, useEffect } from "react";
 import { T, FONT, GLOBAL_CSS } from "../../theme";
 import { useStore } from "../../store";
 import { getHomeData } from "../api/engine";
+import { ProfileDropdown } from "../../components/ProfileDropdown";
+import { clearTokens } from "../../api/client.js";
 
 // Components
 import { SearchBar } from "../components/SearchBar";
@@ -14,6 +16,11 @@ import { ProductDetailsPage } from "./ProductDetailsPage";
 
 export function MarketplaceHome() {
   const { products, shops, selectedVehicle, toggleCart, cart } = useStore();
+
+  // Get user from localStorage (set during login)
+  const [currentUser, setCurrentUser] = useState(() => {
+    try { return JSON.parse(localStorage.getItem('as_user')); } catch { return null; }
+  });
 
   const [loading, setLoading] = useState(true);
   const [data, setData] = useState(null);
@@ -87,9 +94,15 @@ export function MarketplaceHome() {
               </div>
             </div>
 
-            <button onClick={() => setPage("profile")} style={{ width: 42, height: 42, borderRadius: "50%", background: page === "profile" ? T.amber : T.card, border: `1px solid ${page === "profile" ? T.amber : T.border}`, color: page === "profile" ? "#000" : T.t1, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 18, cursor: "pointer", transition: "0.2s" }}>
-              🧔
-            </button>
+            <ProfileDropdown
+              user={currentUser}
+              onLogout={() => {
+                clearTokens();
+                localStorage.removeItem('as_user');
+                setCurrentUser(null);
+                window.location.href = '/login';
+              }}
+            />
 
             <button onClick={toggleCart} style={{ width: 42, height: 42, borderRadius: "50%", background: T.card, border: `1px solid ${T.border}`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 18, cursor: "pointer", position: "relative" }}>
               🛒

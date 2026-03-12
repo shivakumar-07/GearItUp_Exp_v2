@@ -1,13 +1,19 @@
-import { useState, useCallback } from "react";
+import { useState, useCallback, Component } from "react";
+import { Routes, Route, Navigate, useNavigate, useLocation } from "react-router-dom";
 import { T, FONT, GLOBAL_CSS } from "./theme";
 import { fmt, uid } from "./utils";
 import { useStore } from "./store";
 import { Toast, useToast, Btn } from "./components/ui";
+import { setTokens } from "./api/client.js";
 
-// Modals
+// Components
+import { RequireAuth, getDefaultRoute } from "./components/RequireAuth";
+import { ProfileDropdown } from "./components/ProfileDropdown";
+import { Avatar } from "./components/Avatar";
 import { ProductModal } from "./components/ProductModal";
+import LoginPage from "./pages/LoginPage";
 
-// Pages
+// ERP Pages
 import { DashboardPage } from "./pages/DashboardPage";
 import { InventoryPage } from "./pages/InventoryPage";
 import { POSBillingPage } from "./pages/POSBillingPage";
@@ -16,63 +22,122 @@ import { ReportsPage } from "./pages/ReportsPage";
 import { OrdersPage } from "./pages/OrdersPage";
 import { PartiesPage } from "./pages/PartiesPage";
 import { WorkshopPage } from "./pages/WorkshopPage";
+import { PricingPage } from "./pages/PricingPage";
 
-// Marketplace
+// Marketplace Pages
 import { MarketplaceHome } from "./marketplace/pages/MarketplaceHome";
 import { ProductDetailsPage } from "./marketplace/pages/ProductDetailsPage";
 import { CheckoutPage } from "./marketplace/pages/CheckoutPage";
 import { OrderTrackingPage } from "./marketplace/pages/OrderTrackingPage";
-import { GlobalCatalogPage } from "./marketplace/pages/GlobalCatalogPage";
-import { BrandCatalogPage } from "./marketplace/pages/BrandCatalogPage";
 import { AdminPage } from "./marketplace/pages/AdminPage";
 import { CartDrawer } from "./marketplace/components/CartDrawer";
-import { PricingPage } from "./pages/PricingPage";
 
+// ========== ERROR BOUNDARY ==========
+class ErrorBoundary extends Component {
+  constructor(props) { super(props); this.state = { hasError: false, error: null }; }
+  static getDerivedStateFromError(error) { return { hasError: true, error }; }
+  componentDidCatch(error, info) { console.error("[ErrorBoundary]", error, info); }
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div style={{ minHeight: "100vh", background: T.bg, display: "flex", alignItems: "center", justifyContent: "center", fontFamily: FONT.ui }}>
+          <div style={{ textAlign: "center", maxWidth: 420, padding: 40 }}>
+            <div style={{ fontSize: 48, marginBottom: 16 }}>⚠️</div>
+            <div style={{ fontSize: 20, fontWeight: 700, color: T.t1, marginBottom: 8 }}>Something went wrong</div>
+            <div style={{ fontSize: 14, color: T.t3, marginBottom: 24, lineHeight: 1.6 }}>{this.state.error?.message || "An unexpected error occurred."}</div>
+            <button onClick={() => { this.setState({ hasError: false, error: null }); window.location.reload(); }}
+              style={{ background: T.amber, color: "#000", border: "none", borderRadius: 10, padding: "12px 28px", fontSize: 14, fontWeight: 700, cursor: "pointer", fontFamily: FONT.ui }}>
+              Reload App
+            </button>
+          </div>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
+// ========== NAV ITEMS FOR LEFT SIDEBAR ==========
 const NAV_ITEMS = [
-  { key: "dashboard", icon: "◈", label: "Dashboard", shortcut: "D" },
-  { key: "inventory", icon: "⬡", label: "Inventory", shortcut: "I" },
-  { key: "pos", icon: "🧾", label: "POS Billing", shortcut: "P" },
-  { key: "parties", icon: "👥", label: "Parties", shortcut: "A" },
-  { key: "workshop", icon: "🔧", label: "Workshop", shortcut: "W" },
-  { key: "history", icon: "⊞", label: "History", shortcut: "H" },
-  { key: "reports", icon: "📊", label: "Reports", shortcut: "R" },
-  { key: "orders", icon: "◎", label: "Orders", shortcut: "O" },
+  { key: "dashboard", path: "/dashboard", icon: "◈", label: "Dashboard" },
+  { key: "inventory", path: "/inventory", icon: "⬡", label: "Inventory" },
+  { key: "pos", path: "/billing", icon: "🧾", label: "POS" },
+  { key: "parties", path: "/parties", icon: "👥", label: "Parties" },
+  { key: "workshop", path: "/workshop", icon: "🔧", label: "Workshop" },
+  { key: "history", path: "/history", icon: "⊞", label: "History" },
+  { key: "reports", path: "/reports", icon: "📊", label: "Reports" },
+  { key: "orders", path: "/orders", icon: "◎", label: "Orders" },
 ];
 
-export default function App() {
+const MP_NAV = [
+  { key: "home", path: "/marketplace", icon: "🏠", label: "Home", color: "#10B981" },
+  { key: "orders", path: "/marketplace/orders", icon: "📦", label: "Orders", color: "#0EA5E9" },
+  { key: "pricing", path: "/marketplace/pricing", icon: "💎", label: "Pricing", color: "#D97706" },
+];
+
+// ========== MAIN APP COMPONENT ==========
+function AppContent() {
+  const navigate = useNavigate();
+  const location = useLocation();
+
+  // ── Auth state ──
+  const [currentUser, setCurrentUser] = useState(() => {
+    try {
+      const stored = localStorage.getItem("as_user");
+      if (stored) {
+        const user = JSON.parse(stored);
+        const rt = localStorage.getItem("as_refresh_token");
+        if (rt) setTokens(null, rt);
+        return user;
+      }
+    } catch {}
+    return null;
+  });
+
+  // ── Store (always called — hooks rule) ──
   const {
     products, movements, orders, shops, parties, vehicles, jobCards,
     saveProducts, saveMovements, saveOrders, saveShops, saveParties, saveVehicles, saveJobCards,
     auditLog, receipts, saveReceipts,
-    loaded, activeShopId, marketplacePage, setMarketplacePage,
-    logAudit, resetAll
+    loaded, activeShopId, logAudit, resetAll,
   } = useStore();
-  const [page, setPage] = useState("dashboard");
+
+  // ── UI state ──
   const [pModal, setPModal] = useState({ open: false, product: null });
   const { items: toasts, add: toast, remove: removeToast } = useToast();
+  const [shopEdit, setShopEdit] = useState(null);
 
-  // APP MODE TOGGLE STATE
-  const [appMode, setAppMode] = useState("marketplace");
-  const [mpPdpId, setMpPdpId] = useState(null);
-  const [shopEdit, setShopEdit] = useState(null); // { name, city } or null
+  // ── Auth handlers ──
+  const handleLogin = useCallback((user) => {
+    setCurrentUser(user);
+    const dest = getDefaultRoute(user?.role);
+    navigate(dest, { replace: true });
+  }, [navigate]);
 
+  const handleLogout = useCallback(() => {
+    localStorage.removeItem("as_user");
+    localStorage.removeItem("as_refresh_token");
+    setCurrentUser(null);
+    navigate("/login", { replace: true });
+  }, [navigate]);
+
+  // ── Business handlers (same as before, used by ERP pages) ──
   const saveProduct = useCallback((p) => {
-    const exists = products.find(x => x.id === p.id);
-    saveProducts(exists ? products.map(x => x.id === p.id ? p : x) : [...products, p]);
+    if (!products) return;
+    const exists = products.find((x) => x.id === p.id);
+    saveProducts(exists ? products.map((x) => (x.id === p.id ? p : x)) : [...products, p]);
     logAudit(exists ? "PRODUCT_UPDATED" : "PRODUCT_CREATED", "product", p.id, `${p.name} (${p.sku})`);
   }, [products, saveProducts, logAudit]);
 
-  // ========== SINGLE-ITEM SALE HANDLER (legacy, for InventoryPage sale modal) ==========
   const handleSale = useCallback((data) => {
+    if (!products || !movements) return;
     const isQuote = data.type === "Quotation";
     if (!isQuote) {
-      const updated = products.map(p => p.id === data.productId ? { ...p, stock: Math.max(0, p.stock - data.qty) } : p);
-      saveProducts(updated);
+      saveProducts(products.map((p) => (p.id === data.productId ? { ...p, stock: Math.max(0, p.stock - data.qty) } : p)));
     }
-    const sel = products.find(p => p.id === data.productId);
+    const sel = products.find((p) => p.id === data.productId);
     const isCredit = data.paymentMode === "Udhaar" || (data.payments && data.payments.Credit > 0);
-    const paymentStr = data.payments ? Object.entries(data.payments).filter(([_, amt]) => amt > 0).map(([k, amt]) => `${k}:${amt}`).join(", ") : data.payment;
-
+    const paymentStr = data.payments ? Object.entries(data.payments).filter(([_, a]) => a > 0).map(([k, a]) => `${k}:${a}`).join(", ") : data.payment;
     saveMovements([...movements, {
       id: "m" + uid(), shopId: activeShopId, productId: data.productId, productName: sel?.name || "",
       type: isQuote ? "ESTIMATE" : "SALE", qty: data.qty, unitPrice: data.sellPrice, sellingPrice: data.sellPrice,
@@ -81,73 +146,50 @@ export default function App() {
       vehicleReg: data.vehicleReg, mechanic: data.mechanic, supplier: null, invoiceNo: data.invoiceNo,
       payment: paymentStr, paymentMode: data.paymentMode || null, creditDays: 0, paymentStatus: isCredit && !isQuote ? "pending" : "paid",
       note: [data.customerName && `Customer: ${data.customerName}`, data.vehicleReg && `Vehicle: ${data.vehicleReg}`, data.notes].filter(Boolean).join(" · ") || (isQuote ? "Quotation generated" : "Walk-in sale"),
-      date: data.date,
-      ...(data.priceOverride && { priceOverride: data.priceOverride }),
+      date: data.date, ...(data.priceOverride && { priceOverride: data.priceOverride }),
     }]);
-
     logAudit(isQuote ? "QUOTATION_CREATED" : "SALE_RECORDED", "movement", data.invoiceNo, `${data.qty}×${sel?.name?.slice(0, 20)} · ${fmt(data.total)}`);
-    if (data.priceOverride) {
-      logAudit("PRICE_OVERRIDE", "movement", data.invoiceNo, `${sel?.name?.slice(0, 20)}: ${fmt(data.priceOverride.originalPrice)} → ${fmt(data.priceOverride.overriddenPrice)} (${data.priceOverride.reason || "no reason"})`);
-    }
+    if (data.priceOverride) logAudit("PRICE_OVERRIDE", "movement", data.invoiceNo, `${sel?.name?.slice(0, 20)}: ${fmt(data.priceOverride.originalPrice)} → ${fmt(data.priceOverride.overriddenPrice)} (${data.priceOverride.reason || "no reason"})`);
     toast(isQuote ? `Quotation Generated: ${data.invoiceNo}` : `Sale recorded: ${data.qty}×${sel?.name?.slice(0, 20) || "product"} · ${fmt(data.total)}`, isQuote ? "info" : "success", isQuote ? "Estimate Saved" : "Sale Complete");
   }, [products, movements, saveProducts, saveMovements, toast, activeShopId, logAudit]);
 
-  // ========== MULTI-ITEM SALE HANDLER (new, for POS Billing) ==========
   const handleMultiItemSale = useCallback((data) => {
+    if (!products || !movements) return;
     const isQuote = data.type === "Quotation";
     const newMovements = [];
     let updatedProducts = [...products];
     let hasOverrides = false;
-
-    // Process each line item
-    data.items.forEach(item => {
-      if (!isQuote) {
-        updatedProducts = updatedProducts.map(p => p.id === item.productId ? { ...p, stock: Math.max(0, p.stock - item.qty) } : p);
-      }
+    data.items.forEach((item) => {
+      if (!isQuote) updatedProducts = updatedProducts.map((p) => (p.id === item.productId ? { ...p, stock: Math.max(0, p.stock - item.qty) } : p));
       const isCredit = data.paymentMode === "Udhaar" || (data.payments && data.payments.Credit > 0);
-      const paymentStr = data.payments ? Object.entries(data.payments).filter(([_, amt]) => amt > 0).map(([k, amt]) => `${k}:${amt}`).join(", ") : "";
-
+      const paymentStr = data.payments ? Object.entries(data.payments).filter(([_, a]) => a > 0).map(([k, a]) => `${k}:${a}`).join(", ") : "";
       newMovements.push({
         id: "m" + uid(), shopId: activeShopId, productId: item.productId, productName: item.name,
         type: isQuote ? "ESTIMATE" : "SALE", qty: item.qty, unitPrice: item.sellPrice, sellingPrice: item.sellPrice,
         total: item.total, gstAmount: item.gstAmount, profit: isQuote ? 0 : item.profit,
         discount: item.discount, customerName: data.customerName, customerPhone: data.customerPhone,
-        vehicleReg: data.vehicleReg, mechanic: data.mechanic, supplier: null,
-        invoiceNo: data.invoiceNo, // Same invoice number for all line items!
+        vehicleReg: data.vehicleReg, mechanic: data.mechanic, supplier: null, invoiceNo: data.invoiceNo,
         payment: paymentStr, paymentMode: data.paymentMode || null, creditDays: 0,
         paymentStatus: isCredit && !isQuote ? "pending" : "paid",
         note: [data.customerName && `Customer: ${data.customerName}`, data.vehicleReg && `Vehicle: ${data.vehicleReg}`, data.notes].filter(Boolean).join(" · ") || (isQuote ? "Quotation" : "POS Sale"),
-        date: data.date,
-        multiItemInvoice: true,
-        ...(item.priceOverride && { priceOverride: item.priceOverride }),
+        date: data.date, multiItemInvoice: true, ...(item.priceOverride && { priceOverride: item.priceOverride }),
       });
-
       if (item.priceOverride) {
         hasOverrides = true;
         logAudit("PRICE_OVERRIDE", "movement", data.invoiceNo, `${item.name?.slice(0, 20)}: ${fmt(item.priceOverride.originalPrice)} → ${fmt(item.priceOverride.overriddenPrice)} (${item.priceOverride.reason || "no reason"})`);
       }
     });
-
     saveProducts(updatedProducts);
     saveMovements([...movements, ...newMovements]);
-
     logAudit(isQuote ? "MULTI_QUOTATION_CREATED" : "MULTI_SALE_RECORDED", "movement", data.invoiceNo, `${data.items.length} items · ${fmt(data.total)}${hasOverrides ? " · price override(s)" : ""}`);
-    toast(
-      isQuote ? `Quotation: ${data.items.length} items · ${fmt(data.total)}`
-        : `Sale recorded: ${data.items.length} items · ${fmt(data.total)}`,
-      isQuote ? "info" : "success",
-      isQuote ? "Estimate Saved" : `Invoice ${data.invoiceNo}`
-    );
+    toast(isQuote ? `Quotation: ${data.items.length} items · ${fmt(data.total)}` : `Sale recorded: ${data.items.length} items · ${fmt(data.total)}`, isQuote ? "info" : "success", isQuote ? "Estimate Saved" : `Invoice ${data.invoiceNo}`);
   }, [products, movements, saveProducts, saveMovements, toast, activeShopId, logAudit]);
 
-  // ========== PURCHASE HANDLER ==========
   const handlePurchase = useCallback((data) => {
-    const updated = products.map(p => p.id === data.productId ? {
-      ...p, stock: p.stock + data.qty, buyPrice: data.buyPrice,
-      sellPrice: data.newSellPrice || p.sellPrice, supplier: data.supplier || p.supplier,
-    } : p);
+    if (!products || !movements) return;
+    const updated = products.map((p) => (p.id === data.productId ? { ...p, stock: p.stock + data.qty, buyPrice: data.buyPrice, sellPrice: data.newSellPrice || p.sellPrice, supplier: data.supplier || p.supplier } : p));
     saveProducts(updated);
-    const sel = products.find(p => p.id === data.productId);
+    const sel = products.find((p) => p.id === data.productId);
     saveMovements([...movements, {
       id: "m" + uid(), shopId: activeShopId, productId: data.productId, productName: sel?.name || "", type: "PURCHASE",
       qty: data.qty, unitPrice: data.buyPrice, sellingPrice: data.newSellPrice || sel?.sellPrice,
@@ -162,20 +204,15 @@ export default function App() {
     toast(`Stock added: +${data.qty} units · ${fmt(data.total)}`, "info", "Purchase Recorded");
   }, [products, movements, saveProducts, saveMovements, toast, activeShopId, logAudit]);
 
-  // ========== ADJUSTMENT HANDLER ==========
   const handleAdjustment = useCallback((data) => {
-    const sel = products.find(p => p.id === data.productId);
+    if (!products || !movements) return;
+    const sel = products.find((p) => p.id === data.productId);
     const stockChange = data.stockDirection * data.qty;
-    if (stockChange !== 0) {
-      const updated = products.map(p => p.id === data.productId ? { ...p, stock: Math.max(0, p.stock + stockChange) } : p);
-      saveProducts(updated);
-    }
-    const movementType = data.adjustType;
+    if (stockChange !== 0) saveProducts(products.map((p) => (p.id === data.productId ? { ...p, stock: Math.max(0, p.stock + stockChange) } : p)));
     const lossAmount = (data.adjustType === "DAMAGE" || data.adjustType === "THEFT") ? (sel?.buyPrice || 0) * data.qty : 0;
-
     saveMovements([...movements, {
       id: "m" + uid(), shopId: activeShopId, productId: data.productId, productName: sel?.name || "",
-      type: movementType, qty: data.qty, unitPrice: sel?.buyPrice || 0, sellingPrice: sel?.sellPrice || 0,
+      type: data.adjustType, qty: data.qty, unitPrice: sel?.buyPrice || 0, sellingPrice: sel?.sellPrice || 0,
       total: data.refundAmount || lossAmount || 0, gstAmount: 0,
       profit: data.adjustType === "RETURN_IN" ? -(data.refundAmount || 0) : data.adjustType === "DAMAGE" || data.adjustType === "THEFT" ? -lossAmount : 0,
       customerName: data.adjustType === "RETURN_IN" ? "Customer Return" : null,
@@ -186,15 +223,13 @@ export default function App() {
       date: data.date,
       adjustmentMeta: { type: data.adjustType, previousStock: data.previousStock, newStock: (data.previousStock || 0) + stockChange, reason: data.reason, refundMethod: data.refundMethod },
     }]);
-
     const labels = { RETURN_IN: "Customer return processed", RETURN_OUT: "Returned to vendor", CREDIT_NOTE: "Credit note issued", DEBIT_NOTE: "Debit note issued", DAMAGE: "Damage recorded", THEFT: "Shrinkage recorded", AUDIT: "Audit correction applied", OPENING: "Opening stock set" };
     logAudit("ADJUSTMENT_" + data.adjustType, "movement", data.productId, `${labels[data.adjustType] || data.adjustType}: ${stockChange > 0 ? "+" : ""}${stockChange} units`);
     toast(`${labels[data.adjustType] || data.adjustType}: ${stockChange !== 0 ? (stockChange > 0 ? "+" : "") + stockChange + " units of " : ""}${sel?.name?.slice(0, 20) || "product"}${data.refundAmount ? " · " + fmt(data.refundAmount) : ""}`, data.adjustType === "RETURN_IN" || data.adjustType === "OPENING" ? "info" : data.adjustType === "CREDIT_NOTE" || data.adjustType === "DEBIT_NOTE" ? "success" : "warning", labels[data.adjustType] || data.adjustType);
   }, [products, movements, saveProducts, saveMovements, toast, activeShopId, logAudit]);
 
-  // ========== PAYMENT RECEIPT HANDLER (settle udhaar) ==========
   const handlePaymentReceipt = useCallback((data) => {
-    // Create a RECEIPT movement and update related movements
+    if (!movements) return;
     const receiptMovement = {
       id: "m" + uid(), shopId: activeShopId, productId: null, productName: "",
       type: "RECEIPT", qty: 0, unitPrice: 0, sellingPrice: 0,
@@ -204,9 +239,7 @@ export default function App() {
       note: `Payment received: ${fmt(data.amount)} from ${data.partyName} via ${data.paymentMode}. ${data.notes || ""}`.trim(),
       date: Date.now(),
     };
-
-    // Mark pending movements as paid if movementIds provided, otherwise settle by customer name
-    let updatedMovements = movements.map(m => {
+    let updatedMovements = movements.map((m) => {
       if (data.movementIds && data.movementIds.length > 0) {
         if (data.movementIds.includes(m.id)) return { ...m, paymentStatus: "paid" };
       } else if (m.customerName === data.partyName && m.paymentStatus === "pending") {
@@ -214,291 +247,174 @@ export default function App() {
       }
       return m;
     });
-
     saveMovements([...updatedMovements, receiptMovement]);
     logAudit("RECEIPT_RECORDED", "receipt", data.partyName, `${fmt(data.amount)} via ${data.paymentMode}`);
     toast(`Payment received: ${fmt(data.amount)} from ${data.partyName}`, "success", "Receipt Recorded");
   }, [movements, saveMovements, activeShopId, logAudit, toast]);
 
-  if (!loaded || !products || !movements) return (
-    <div style={{ minHeight: "100vh", background: T.bg, display: "flex", alignItems: "center", justifyContent: "center", fontFamily: FONT.ui }}>
-      <div style={{ textAlign: "center" }}>
-        <div style={{ fontSize: 42, animation: "pulse 1.5s infinite", marginBottom: 16 }}>⚙️</div>
-        <div style={{ color: T.t3, fontSize: 14 }}>Loading AutoMobile Space…</div>
-      </div>
-    </div>
-  );
-
-  // ========== MARKETPLACE ROUTING ==========
-  if (appMode === "marketplace") {
-    const mpPage = marketplacePage;
-    const setMpPage = setMarketplacePage;
-    const renderMpPage = () => {
-      if (mpPage === "pdp" && mpPdpId) return <ProductDetailsPage productId={mpPdpId} onBack={() => setMpPage("home")} />;
-      if (mpPage === "checkout") return <CheckoutPage onBack={() => setMpPage("home")} onOrderPlaced={() => setMpPage("tracking")} />;
-      if (mpPage === "tracking") return <OrderTrackingPage onBack={() => setMpPage("home")} />;
-      if (mpPage === "pricing") return <PricingPage onBack={() => setMpPage("home")} />;
-      return <MarketplaceHome />;
-    };
-
-    return (
-      <>
-        <div style={{ paddingLeft: 68 }}>
-          {renderMpPage()}
-        </div>
-        <CartDrawer onCheckout={() => setMpPage("checkout")} />
-
-        {/* LEFT SIDE PANEL */}
-        {(() => {
-          const MP_ACTIONS = [
-            { icon: "📦", label: "Orders", page: "tracking", color: T.sky },
-            { icon: "💎", label: "Pricing", page: "pricing", color: T.amber },
-          ];
-          return (
-            <div style={{
-              position: "fixed", left: 0, top: 0, bottom: 0, width: 68, zIndex: 400,
-              background: `${T.surface}ee`, backdropFilter: "blur(12px)", borderRight: `1px solid ${T.border}`,
-              display: "flex", flexDirection: "column", alignItems: "center", paddingTop: 80, gap: 4,
-            }}>
-              <div style={{ fontSize: 8, color: T.t4, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 4 }}>Menu</div>
-              {MP_ACTIONS.map(a => (
-                <button key={a.label} onClick={() => setMpPage(a.page)} title={a.label}
-                  style={{
-                    width: 58, height: 50, borderRadius: 10, border: `1px solid ${mpPage === a.page ? a.color + "44" : T.border}`, cursor: "pointer",
-                    background: mpPage === a.page ? `${a.color}22` : "transparent",
-                    display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 2,
-                    transition: "all 0.15s", padding: "4px 0",
-                  }}>
-                  <span style={{ fontSize: 16 }}>{a.icon}</span>
-                  <span style={{ fontSize: 8, fontWeight: 700, color: mpPage === a.page ? a.color : T.t3, fontFamily: FONT.ui, letterSpacing: "0.02em" }}>{a.label}</span>
-                </button>
-              ))}
-              <div style={{ flex: 1 }} />
-              {/* Mode Switcher */}
-              <div style={{ display: "flex", flexDirection: "column", gap: 3, marginBottom: 10, width: 58 }}>
-                <div style={{ fontSize: 7, color: T.t4, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.06em", textAlign: "center", marginBottom: 2 }}>Switch</div>
-                {[
-                  { mode: "shopOwner", icon: "🏠", label: "Shop", color: T.amber },
-                  { mode: "admin", icon: "🛡️", label: "Admin", color: "#7C3AED" },
-                ].map(m => (
-                  <button key={m.mode} onClick={() => setAppMode(m.mode)} title={`Switch to ${m.label}`}
-                    style={{
-                      width: 58, height: 36, borderRadius: 8, border: "none", cursor: "pointer",
-                      background: `${m.color}22`, color: m.color,
-                      display: "flex", alignItems: "center", justifyContent: "center", gap: 4,
-                      fontSize: 7, fontWeight: 700, letterSpacing: "0.02em",
-                      transition: "all 0.15s", padding: 0,
-                    }} className="btn-hover">
-                    <span style={{ fontSize: 13 }}>{m.icon}</span>{m.label}
-                  </button>
-                ))}
-              </div>
-            </div>
-          );
-        })()}
-      </>
-    );
-  }
-
-  // ========== ADMIN CONSOLE ==========
-  if (appMode === "admin") {
-    return (
-      <>
-        <div style={{ paddingLeft: 68 }}>
-          <AdminPage onViewProduct={(id) => { setMpPdpId(id); setAppMode("marketplace"); }} />
-        </div>
-        {/* LEFT SIDE PANEL */}
-        <div style={{
-          position: "fixed", left: 0, top: 0, bottom: 0, width: 68, zIndex: 400,
-          background: `${T.surface}ee`, backdropFilter: "blur(12px)", borderRight: `1px solid ${T.border}`,
-          display: "flex", flexDirection: "column", alignItems: "center", paddingTop: 20, gap: 4,
-        }}>
-          <div style={{ width: 40, height: 40, borderRadius: 12, background: `linear-gradient(135deg, #4F46E5, #7C3AED)`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 18, boxShadow: "0 4px 16px rgba(79,70,229,0.4)", marginBottom: 12 }}>🛡️</div>
-          <div style={{ fontSize: 7, color: "#A78BFA", fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.08em" }}>Admin</div>
-          <div style={{ flex: 1 }} />
-          {/* Mode Switcher */}
-          <div style={{ display: "flex", flexDirection: "column", gap: 3, marginBottom: 10, width: 58 }}>
-            <div style={{ fontSize: 7, color: T.t4, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.06em", textAlign: "center", marginBottom: 2 }}>Switch</div>
-            {[
-              { mode: "marketplace", icon: "🛒", label: "Market", color: T.emerald },
-              { mode: "shopOwner", icon: "🏠", label: "Shop", color: T.amber },
-            ].map(m => (
-              <button key={m.mode} onClick={() => setAppMode(m.mode)} title={`Switch to ${m.label}`}
-                style={{
-                  width: 58, height: 36, borderRadius: 8, border: "none", cursor: "pointer",
-                  background: `${m.color}22`, color: m.color,
-                  display: "flex", alignItems: "center", justifyContent: "center", gap: 4,
-                  fontSize: 7, fontWeight: 700, letterSpacing: "0.02em",
-                  transition: "all 0.15s", padding: 0,
-                }} className="btn-hover">
-                <span style={{ fontSize: 13 }}>{m.icon}</span>{m.label}
-              </button>
-            ))}
-          </div>
-        </div>
-      </>
-    );
-  }
-
-  // ========== SHOP OWNER ERP ==========
-  const todaySales = movements.filter(m => m.shopId === activeShopId && m.type === "SALE" && m.date >= Date.now() - 86400000);
+  // ── Computed values ──
+  const todaySales = (movements || []).filter((m) => m.shopId === activeShopId && m.type === "SALE" && m.date >= Date.now() - 86400000);
   const todayRev = todaySales.reduce((s, m) => s + m.total, 0);
-  const stockSt = p => { if (p.stock <= 0) return "out"; if (p.stock < p.minStock) return "low"; return "ok"; };
-  const lowCount = products.filter(p => p.shopId === activeShopId && stockSt(p) !== "ok").length;
-  const pendingOrders = (orders || []).filter(o => o.shopId === activeShopId && (o.status === "NEW" || o.status === "placed")).length;
+  const stockSt = (p) => { if (p.stock <= 0) return "out"; if (p.stock < p.minStock) return "low"; return "ok"; };
+  const lowCount = (products || []).filter((p) => p.shopId === activeShopId && stockSt(p) !== "ok").length;
+  const pendingOrders = (orders || []).filter((o) => o.shopId === activeShopId && (o.status === "NEW" || o.status === "placed")).length;
+  const shop = (shops || []).find((s) => s.id === activeShopId) || { name: "My Shop", city: "Location" };
+  const currentPath = location.pathname;
 
-  const renderPage = () => {
-    if (page === "dashboard") return <DashboardPage products={products} movements={movements} orders={orders} activeShopId={activeShopId} onNavigate={setPage} jobCards={jobCards} parties={parties} vehicles={vehicles} />;
-    if (page === "inventory") return <InventoryPage products={products} movements={movements} activeShopId={activeShopId} onAdd={() => setPModal({ open: true, product: null })} onEdit={p => setPModal({ open: true, product: p })} onSale={handleSale} onPurchase={handlePurchase} onAdjust={handleAdjustment} toast={toast} />;
-    if (page === "pos") return <POSBillingPage products={products} activeShopId={activeShopId} onMultiSale={handleMultiItemSale} toast={toast} />;
-    if (page === "history") return <HistoryPage movements={movements} activeShopId={activeShopId} />;
-    if (page === "reports") return <ReportsPage movements={movements} products={products} activeShopId={activeShopId} receipts={receipts} saveReceipts={saveReceipts} onPaymentReceipt={handlePaymentReceipt} toast={toast} />;
-    if (page === "orders") return <OrdersPage />;
-    if (page === "parties") return <PartiesPage parties={parties} movements={movements} vehicles={vehicles} activeShopId={activeShopId} onSaveParty={(p) => { const exists = (parties || []).find(x => x.id === p.id); saveParties(exists ? parties.map(x => x.id === p.id ? p : x) : [...(parties || []), p]); logAudit(exists ? "PARTY_UPDATED" : "PARTY_CREATED", "party", p.id, p.name); }} onSaveVehicle={(v) => { const exists = (vehicles || []).find(x => x.id === v.id); saveVehicles(exists ? vehicles.map(x => x.id === v.id ? v : x) : [...(vehicles || []), v]); }} toast={toast} />;
-    if (page === "workshop") return <WorkshopPage jobCards={jobCards} vehicles={vehicles} parties={parties} products={products} activeShopId={activeShopId} onSaveJobCard={(jc) => { const exists = (jobCards || []).find(x => x.id === jc.id); saveJobCards(exists ? jobCards.map(x => x.id === jc.id ? jc : x) : [...(jobCards || []), jc]); logAudit(exists ? "JOB_CARD_UPDATED" : "JOB_CARD_CREATED", "job_card", jc.id, `${jc.jobNumber} — ${jc.status}`); }} toast={toast} />;
-  };
+  // ── Loading state ──
+  if (!loaded) {
+    return (
+      <div style={{ minHeight: "100vh", background: T.bg, display: "flex", alignItems: "center", justifyContent: "center", fontFamily: FONT.ui }}>
+        <div style={{ textAlign: "center" }}>
+          <div style={{ fontSize: 42, animation: "pulse 1.5s infinite", marginBottom: 16 }}>⚙️</div>
+          <div style={{ color: T.t3, fontSize: 14 }}>Loading AutoSpace…</div>
+        </div>
+        <style>{GLOBAL_CSS}</style>
+      </div>
+    );
+  }
 
-  return (
+  // ========== ERP SHELL (sidebar+topbar for shop owner) ==========
+  const ERPShell = ({ children }) => (
     <div style={{ minHeight: "100vh", background: T.bg, fontFamily: FONT.ui, color: T.t1 }}>
       <style>{GLOBAL_CSS}</style>
 
       {/* TOPBAR */}
-      <div style={{ height: 56, background: T.surface, borderBottom: `1px solid ${T.border}`, display: "flex", alignItems: "center", padding: "0 20px", position: "sticky", top: 0, zIndex: 500, gap: 10, boxShadow: `0 4px 24px rgba(0,0,0,0.3), 0 1px 0 ${T.border}` }}>
-        {/* Brand — click to edit */}
-        {(() => {
-          const shop = (shops || []).find(s => s.id === activeShopId) || { name: "My Shop", city: "Location" };
-          return (
-            <div style={{ display: "flex", alignItems: "center", gap: 10, marginRight: 12, position: "relative" }}>
-              <div style={{ width: 36, height: 36, background: `linear-gradient(135deg,${T.amber},${T.amberDim})`, borderRadius: 10, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 18, fontWeight: 900, color: "#000", boxShadow: `0 2px 12px ${T.amber}55`, letterSpacing: "-0.05em" }}>{shop.name?.charAt(0) || "S"}</div>
-              <div onClick={() => setShopEdit({ name: shop.name, city: shop.city })} style={{ cursor: "pointer" }} title="Click to edit shop name & location">
-                <div style={{ fontSize: 14, fontWeight: 800, color: T.t1, letterSpacing: "-0.02em", display: "flex", alignItems: "center", gap: 4 }}>{shop.name} <span style={{ fontSize: 10, color: T.t4 }}>✏️</span></div>
-                <div style={{ fontSize: 10, color: T.amber, fontWeight: 600, letterSpacing: "0.04em" }}>INVENTORY · {shop.city?.toUpperCase() || "LOCATION"}</div>
-              </div>
-
-              {/* Edit Popover */}
-              {shopEdit && (
-                <div style={{ position: "absolute", top: 48, left: 0, zIndex: 9999, background: T.card, border: `1px solid ${T.border}`, borderRadius: 12, padding: 16, boxShadow: "0 12px 40px rgba(0,0,0,0.5)", width: 280 }}>
-                  <div style={{ fontSize: 13, fontWeight: 800, color: T.t1, marginBottom: 12 }}>Edit Shop Details</div>
-                  <div style={{ marginBottom: 10 }}>
-                    <label style={{ fontSize: 10, color: T.t3, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.06em", display: "block", marginBottom: 4 }}>Shop Name</label>
-                    <input value={shopEdit.name} onChange={e => setShopEdit(prev => ({ ...prev, name: e.target.value }))} style={{ width: "100%", background: T.surface, border: `1px solid ${T.border}`, borderRadius: 8, padding: "8px 10px", color: T.t1, fontSize: 13, fontWeight: 600, fontFamily: FONT.ui, outline: "none", boxSizing: "border-box" }} />
-                  </div>
-                  <div style={{ marginBottom: 14 }}>
-                    <label style={{ fontSize: 10, color: T.t3, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.06em", display: "block", marginBottom: 4 }}>Location / City</label>
-                    <input value={shopEdit.city} onChange={e => setShopEdit(prev => ({ ...prev, city: e.target.value }))} style={{ width: "100%", background: T.surface, border: `1px solid ${T.border}`, borderRadius: 8, padding: "8px 10px", color: T.t1, fontSize: 13, fontWeight: 600, fontFamily: FONT.ui, outline: "none", boxSizing: "border-box" }} />
-                  </div>
-                  <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
-                    <button onClick={() => setShopEdit(null)} style={{ background: "transparent", border: `1px solid ${T.border}`, borderRadius: 8, padding: "6px 14px", color: T.t3, fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: FONT.ui }}>Cancel</button>
-                    <button onClick={() => { const updated = shops.map(s => s.id === activeShopId ? { ...s, name: shopEdit.name, city: shopEdit.city } : s); saveShops(updated); setShopEdit(null); toast("Shop details updated!", "emerald"); }} style={{ background: T.amber, border: "none", borderRadius: 8, padding: "6px 14px", color: "#000", fontSize: 12, fontWeight: 800, cursor: "pointer", fontFamily: FONT.ui }}>Save</button>
-                  </div>
-                </div>
-              )}
-            </div>
-          );
-        })()}
-
-        {/* NAV */}
-        <div style={{ display: "flex", gap: 2 }}>
-          {NAV_ITEMS.map(n => (
-            <button key={n.key} className={`nav-item${page === n.key ? " nav-active" : ""}`} onClick={() => setPage(n.key)}
-              style={{ background: page === n.key ? T.amberGlow : "transparent", color: page === n.key ? T.amber : T.t2, border: `1px solid ${page === n.key ? T.amber + "44" : "transparent"}`, borderRadius: 8, padding: "7px 14px", fontSize: 13, fontWeight: 600, cursor: "pointer", fontFamily: FONT.ui, display: "flex", alignItems: "center", gap: 7, position: "relative" }}>
-              <span style={{ fontSize: 15 }}>{n.icon}</span>{n.label}
-              {n.key === "orders" && pendingOrders > 0 && <span style={{ background: T.crimson, color: "#fff", fontSize: 10, borderRadius: "50%", width: 16, height: 16, display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 800 }}>{pendingOrders}</span>}
-              {n.key === "inventory" && lowCount > 0 && <span style={{ background: T.amber, color: "#000", fontSize: 9, borderRadius: "50%", width: 14, height: 14, display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 900 }}>{lowCount}</span>}
-            </button>
-          ))}
-        </div>
-
-        <div style={{ flex: 1 }} />
-
-        {/* Quick stats */}
-        {todayRev > 0 && (
-          <div style={{ background: T.emeraldBg, border: `1px solid ${T.emerald}33`, borderRadius: 8, padding: "5px 12px", fontSize: 12, color: T.emerald, fontWeight: 700, fontFamily: FONT.mono, display: "flex", alignItems: "center", gap: 6 }}>
-            📈 Today: {fmt(todayRev)}
+      <div style={{ height: 56, background: T.surface, borderBottom: `1px solid ${T.border}`, display: "flex", alignItems: "center", padding: "0 20px 0 88px", position: "sticky", top: 0, zIndex: 500, gap: 10, boxShadow: `0 4px 24px rgba(0,0,0,0.3), 0 1px 0 ${T.border}` }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 10, marginRight: 12, position: "relative" }}>
+          <div onClick={() => setShopEdit({ name: shop.name, city: shop.city })} style={{ cursor: "pointer" }} title="Edit shop details">
+            <div style={{ fontSize: 14, fontWeight: 800, color: T.t1, letterSpacing: "-0.02em", display: "flex", alignItems: "center", gap: 4 }}>{shop.name} <span style={{ fontSize: 10, color: T.t4 }}>✏️</span></div>
+            <div style={{ fontSize: 10, color: T.amber, fontWeight: 600, letterSpacing: "0.04em" }}>INVENTORY · {shop.city?.toUpperCase() || "LOCATION"}</div>
           </div>
-        )}
-        {lowCount > 0 && (
-          <button onClick={() => setPage("inventory")} style={{ background: T.crimsonBg, border: `1px solid ${T.crimson}33`, borderRadius: 8, padding: "5px 12px", fontSize: 12, color: T.crimson, fontWeight: 700, cursor: "pointer", fontFamily: FONT.ui, display: "flex", alignItems: "center", gap: 5 }}>
-            ⚠ {lowCount} alert{lowCount > 1 ? "s" : ""}
-          </button>
-        )}
-
-        <Btn size="sm" variant="ghost" onClick={() => setPage("pos")} style={{ borderColor: T.border }}>🧾 POS</Btn>
+          {shopEdit && (
+            <div style={{ position: "absolute", top: 48, left: 0, zIndex: 9999, background: T.card, border: `1px solid ${T.border}`, borderRadius: 12, padding: 16, boxShadow: "0 12px 40px rgba(0,0,0,0.5)", width: 280 }}>
+              <div style={{ fontSize: 13, fontWeight: 800, color: T.t1, marginBottom: 12 }}>Edit Shop Details</div>
+              <div style={{ marginBottom: 10 }}>
+                <label style={{ fontSize: 10, color: T.t3, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.06em", display: "block", marginBottom: 4 }}>Shop Name</label>
+                <input value={shopEdit.name} onChange={(e) => setShopEdit((p) => ({ ...p, name: e.target.value }))} style={{ width: "100%", background: T.surface, border: `1px solid ${T.border}`, borderRadius: 8, padding: "8px 10px", color: T.t1, fontSize: 13, fontWeight: 600, fontFamily: FONT.ui, outline: "none", boxSizing: "border-box" }} />
+              </div>
+              <div style={{ marginBottom: 14 }}>
+                <label style={{ fontSize: 10, color: T.t3, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.06em", display: "block", marginBottom: 4 }}>Location / City</label>
+                <input value={shopEdit.city} onChange={(e) => setShopEdit((p) => ({ ...p, city: e.target.value }))} style={{ width: "100%", background: T.surface, border: `1px solid ${T.border}`, borderRadius: 8, padding: "8px 10px", color: T.t1, fontSize: 13, fontWeight: 600, fontFamily: FONT.ui, outline: "none", boxSizing: "border-box" }} />
+              </div>
+              <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+                <button onClick={() => setShopEdit(null)} style={{ background: "transparent", border: `1px solid ${T.border}`, borderRadius: 8, padding: "6px 14px", color: T.t3, fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: FONT.ui }}>Cancel</button>
+                <button onClick={() => { const updated = shops.map((s) => (s.id === activeShopId ? { ...s, name: shopEdit.name, city: shopEdit.city } : s)); saveShops(updated); setShopEdit(null); toast("Shop details updated!", "emerald"); }} style={{ background: T.amber, border: "none", borderRadius: 8, padding: "6px 14px", color: "#000", fontSize: 12, fontWeight: 800, cursor: "pointer", fontFamily: FONT.ui }}>Save</button>
+              </div>
+            </div>
+          )}
+        </div>
+        <div style={{ flex: 1 }} />
+        {todayRev > 0 && (<div style={{ background: T.emeraldBg, border: `1px solid ${T.emerald}33`, borderRadius: 8, padding: "5px 12px", fontSize: 12, color: T.emerald, fontWeight: 700, fontFamily: FONT.mono, display: "flex", alignItems: "center", gap: 6 }}>📈 Today: {fmt(todayRev)}</div>)}
+        {lowCount > 0 && (<button onClick={() => navigate("/inventory")} style={{ background: T.crimsonBg, border: `1px solid ${T.crimson}33`, borderRadius: 8, padding: "5px 12px", fontSize: 12, color: T.crimson, fontWeight: 700, cursor: "pointer", fontFamily: FONT.ui, display: "flex", alignItems: "center", gap: 5 }}>⚠ {lowCount} alert{lowCount > 1 ? "s" : ""}</button>)}
+        <Btn size="sm" variant="ghost" onClick={() => navigate("/billing")} style={{ borderColor: T.border }}>🧾 POS</Btn>
         <Btn size="sm" variant="amber" onClick={() => setPModal({ open: true, product: null })}>＋ Product</Btn>
-
-        {/* Reset button */}
         <button onClick={() => { if (confirm("Reset all data to defaults?")) resetAll(); }} style={{ background: "transparent", border: `1px solid ${T.border}`, borderRadius: 8, padding: "5px 10px", fontSize: 11, color: T.t3, cursor: "pointer", fontWeight: 600, fontFamily: FONT.ui }}>🔄</button>
-
-        {/* Avatar */}
-        <div style={{ width: 34, height: 34, borderRadius: "50%", background: `linear-gradient(135deg,${T.amber},${T.amberDim})`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 13, color: "#000", fontWeight: 900, marginLeft: 4 }}>R</div>
+        <ProfileDropdown user={currentUser} onLogout={handleLogout} />
       </div>
 
-      {/* PAGE CONTENT */}
+      {/* PAGE */}
       <div style={{ padding: "24px 28px 24px 92px", maxWidth: 1440, margin: "0 auto" }}>
-        {renderPage()}
+        {children}
       </div>
 
-      {/* MODALS */}
       <ProductModal open={pModal.open} product={pModal.product} activeShopId={activeShopId} onClose={() => setPModal({ open: false, product: null })} onSave={saveProduct} toast={toast} />
-
-      {/* TOASTS */}
       <Toast items={toasts} onRemove={removeToast} />
 
-      {/* QUICK ACTIONS SIDE PANEL */}
-      {(() => {
-        const ACTIONS = [
-          { icon: "🧾", label: "New Sale", page: "pos", color: T.amber },
-          { icon: "📥", label: "Purchase", page: "inventory", color: T.sky },
-          { icon: "👤", label: "Parties", page: "parties", color: T.emerald },
-          { icon: "🔧", label: "Workshop", page: "workshop", color: T.violet },
-          { icon: "📊", label: "Reports", page: "reports", color: T.amber },
-          { icon: "📋", label: "History", page: "history", color: T.t2 },
-          { icon: "＋", label: "Product", action: () => setPModal({ open: true, product: null }), color: T.amber },
-        ];
-        return (
-          <div style={{
-            position: "fixed", left: 0, top: 56, bottom: 0, width: 68, zIndex: 400,
-            background: `${T.surface}ee`, backdropFilter: "blur(12px)", borderRight: `1px solid ${T.border}`,
-            display: "flex", flexDirection: "column", alignItems: "center", paddingTop: 12, gap: 4,
-          }}>
-            <div style={{ fontSize: 8, color: T.t4, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 4 }}>Quick</div>
-            {ACTIONS.map(a => (
-              <button key={a.label} onClick={a.action || (() => setPage(a.page))} title={a.label}
-                style={{
-                  width: 58, height: 50, borderRadius: 10, border: `1px solid ${page === a.page ? a.color + "44" : T.border}`, cursor: "pointer",
-                  background: page === a.page ? `${a.color}22` : "transparent",
-                  display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 2,
-                  transition: "all 0.15s", padding: "4px 0",
-                }}>
-                <span style={{ fontSize: 16 }}>{a.icon}</span>
-                <span style={{ fontSize: 8, fontWeight: 700, color: page === a.page ? a.color : T.t3, fontFamily: FONT.ui, letterSpacing: "0.02em" }}>{a.label}</span>
-              </button>
-            ))}
-            <div style={{ flex: 1 }} />
-            {/* Mode Switcher */}
-            <div style={{ display: "flex", flexDirection: "column", gap: 3, marginBottom: 10, width: 58 }}>
-              <div style={{ fontSize: 7, color: T.t4, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.06em", textAlign: "center", marginBottom: 2 }}>Switch</div>
-              {[
-                { mode: "marketplace", icon: "🛒", label: "Market", color: T.emerald },
-                { mode: "admin", icon: "🛡️", label: "Admin", color: "#7C3AED" },
-              ].map(m => (
-                <button key={m.mode} onClick={() => setAppMode(m.mode)} title={`Switch to ${m.label}`}
-                  style={{
-                    width: 58, height: 36, borderRadius: 8, border: "none", cursor: "pointer",
-                    background: `${m.color}22`, color: m.color,
-                    display: "flex", alignItems: "center", justifyContent: "center", gap: 4,
-                    fontSize: 7, fontWeight: 700, letterSpacing: "0.02em",
-                    transition: "all 0.15s", padding: 0,
-                  }} className="btn-hover">
-                  <span style={{ fontSize: 13 }}>{m.icon}</span>{m.label}
-                </button>
-              ))}
-            </div>
-          </div>
-        );
-      })()}
-
-
+      {/* LEFT SIDEBAR */}
+      <div style={{ position: "fixed", left: 0, top: 0, bottom: 0, width: 68, zIndex: 600, background: `${T.surface}f5`, backdropFilter: "blur(16px)", borderRight: `1px solid ${T.border}`, display: "flex", flexDirection: "column", alignItems: "center", paddingTop: 10, gap: 2 }}>
+        <div style={{ width: 40, height: 40, borderRadius: 12, background: `linear-gradient(135deg,${T.amber},${T.amberDim})`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 17, fontWeight: 900, color: "#000", boxShadow: `0 2px 12px ${T.amber}55`, marginBottom: 4 }}>{shop.name?.charAt(0) || "S"}</div>
+        <div style={{ fontSize: 7, color: T.amber, fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 8 }}>ERP</div>
+        {NAV_ITEMS.map((n) => {
+          const isActive = currentPath === n.path || currentPath.startsWith(n.path + "/");
+          return (
+            <button key={n.key} onClick={() => navigate(n.path)} title={n.label} style={{ width: 58, height: 46, borderRadius: 10, border: `1px solid ${isActive ? T.amber + "44" : "transparent"}`, cursor: "pointer", background: isActive ? T.amberGlow : "transparent", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 1, transition: "all 0.15s", padding: "2px 0", position: "relative" }}>
+              <span style={{ fontSize: 15 }}>{n.icon}</span>
+              <span style={{ fontSize: 7, fontWeight: 700, color: isActive ? T.amber : T.t3, fontFamily: FONT.ui, letterSpacing: "0.02em" }}>{n.label}</span>
+              {n.key === "orders" && pendingOrders > 0 && <span style={{ position: "absolute", top: 2, right: 6, background: T.crimson, color: "#fff", fontSize: 8, borderRadius: "50%", width: 14, height: 14, display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 900 }}>{pendingOrders}</span>}
+              {n.key === "inventory" && lowCount > 0 && <span style={{ position: "absolute", top: 2, right: 6, background: T.amber, color: "#000", fontSize: 8, borderRadius: "50%", width: 14, height: 14, display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 900 }}>{lowCount}</span>}
+            </button>
+          );
+        })}
+        <div style={{ flex: 1 }} />
+      </div>
     </div>
+  );
+
+  // ========== MARKETPLACE SHELL ==========
+  const MPShell = ({ children }) => (
+    <>
+      <style>{GLOBAL_CSS}</style>
+      <div style={{ paddingLeft: 68 }}>{children}</div>
+      <CartDrawer onCheckout={() => navigate("/marketplace/checkout")} />
+      <div style={{ position: "fixed", left: 0, top: 0, bottom: 0, width: 68, zIndex: 400, background: `${T.surface}ee`, backdropFilter: "blur(12px)", borderRight: `1px solid ${T.border}`, display: "flex", flexDirection: "column", alignItems: "center", paddingTop: 16, gap: 4 }}>
+        <div style={{ width: 40, height: 40, borderRadius: 12, background: `linear-gradient(135deg,${T.amber},${T.amberDim})`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 18, boxShadow: `0 2px 12px ${T.amber}55`, marginBottom: 8 }}>⚙️</div>
+        <div style={{ fontSize: 7, color: T.amber, fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 12 }}>Market</div>
+        {MP_NAV.map((a) => {
+          const isActive = currentPath === a.path;
+          return (
+            <button key={a.key} onClick={() => navigate(a.path)} title={a.label} style={{ width: 58, height: 50, borderRadius: 10, border: `1px solid ${isActive ? a.color + "44" : T.border}`, cursor: "pointer", background: isActive ? `${a.color}22` : "transparent", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 2, transition: "all 0.15s", padding: "4px 0" }}>
+              <span style={{ fontSize: 16 }}>{a.icon}</span>
+              <span style={{ fontSize: 8, fontWeight: 700, color: isActive ? a.color : T.t3, fontFamily: FONT.ui, letterSpacing: "0.02em" }}>{a.label}</span>
+            </button>
+          );
+        })}
+        <div style={{ flex: 1 }} />
+      </div>
+      <Toast items={toasts} onRemove={removeToast} />
+    </>
+  );
+
+  // ========== ADMIN SHELL ==========
+  const AdminShell = ({ children }) => (
+    <>
+      <style>{GLOBAL_CSS}</style>
+      <div style={{ paddingLeft: 68 }}>{children}</div>
+      <div style={{ position: "fixed", left: 0, top: 0, bottom: 0, width: 68, zIndex: 400, background: `${T.surface}ee`, backdropFilter: "blur(12px)", borderRight: `1px solid ${T.border}`, display: "flex", flexDirection: "column", alignItems: "center", paddingTop: 20, gap: 4 }}>
+        <div style={{ width: 40, height: 40, borderRadius: 12, background: "linear-gradient(135deg, #4F46E5, #7C3AED)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 18, boxShadow: "0 4px 16px rgba(79,70,229,0.4)", marginBottom: 12 }}>🛡️</div>
+        <div style={{ fontSize: 7, color: "#A78BFA", fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.08em" }}>Admin</div>
+        <div style={{ flex: 1 }} />
+      </div>
+      <Toast items={toasts} onRemove={removeToast} />
+    </>
+  );
+
+  // ========== ROUTE TREE ==========
+  return (
+    <Routes>
+      {/* Public */}
+      <Route path="/login" element={currentUser ? <Navigate to={getDefaultRoute(currentUser.role)} replace /> : <LoginPage onLogin={handleLogin} />} />
+
+      {/* ERP routes — SHOP_OWNER */}
+      <Route path="/dashboard" element={currentUser?.role === "SHOP_OWNER" ? <ERPShell><DashboardPage products={products} movements={movements} orders={orders} activeShopId={activeShopId} onNavigate={(p) => navigate("/" + p)} jobCards={jobCards} parties={parties} vehicles={vehicles} /></ERPShell> : <Navigate to={currentUser ? getDefaultRoute(currentUser.role) : "/login"} replace />} />
+      <Route path="/inventory" element={currentUser?.role === "SHOP_OWNER" ? <ERPShell><InventoryPage products={products} movements={movements} activeShopId={activeShopId} onAdd={() => setPModal({ open: true, product: null })} onEdit={(p) => setPModal({ open: true, product: p })} onSale={handleSale} onPurchase={handlePurchase} onAdjust={handleAdjustment} toast={toast} /></ERPShell> : <Navigate to={currentUser ? getDefaultRoute(currentUser.role) : "/login"} replace />} />
+      <Route path="/billing" element={currentUser?.role === "SHOP_OWNER" ? <ERPShell><POSBillingPage products={products} activeShopId={activeShopId} onMultiSale={handleMultiItemSale} toast={toast} /></ERPShell> : <Navigate to={currentUser ? getDefaultRoute(currentUser.role) : "/login"} replace />} />
+      <Route path="/parties" element={currentUser?.role === "SHOP_OWNER" ? <ERPShell><PartiesPage parties={parties} movements={movements} vehicles={vehicles} activeShopId={activeShopId} onSaveParty={(p) => { const exists = (parties || []).find((x) => x.id === p.id); saveParties(exists ? parties.map((x) => (x.id === p.id ? p : x)) : [...(parties || []), p]); logAudit(exists ? "PARTY_UPDATED" : "PARTY_CREATED", "party", p.id, p.name); }} onSaveVehicle={(v) => { const exists = (vehicles || []).find((x) => x.id === v.id); saveVehicles(exists ? vehicles.map((x) => (x.id === v.id ? v : x)) : [...(vehicles || []), v]); }} toast={toast} /></ERPShell> : <Navigate to={currentUser ? getDefaultRoute(currentUser.role) : "/login"} replace />} />
+      <Route path="/workshop" element={currentUser?.role === "SHOP_OWNER" ? <ERPShell><WorkshopPage jobCards={jobCards} vehicles={vehicles} parties={parties} products={products} activeShopId={activeShopId} onSaveJobCard={(jc) => { const exists = (jobCards || []).find((x) => x.id === jc.id); saveJobCards(exists ? jobCards.map((x) => (x.id === jc.id ? jc : x)) : [...(jobCards || []), jc]); logAudit(exists ? "JOB_CARD_UPDATED" : "JOB_CARD_CREATED", "job_card", jc.id, `${jc.jobNumber} — ${jc.status}`); }} toast={toast} /></ERPShell> : <Navigate to={currentUser ? getDefaultRoute(currentUser.role) : "/login"} replace />} />
+      <Route path="/history" element={currentUser?.role === "SHOP_OWNER" ? <ERPShell><HistoryPage movements={movements} activeShopId={activeShopId} /></ERPShell> : <Navigate to={currentUser ? getDefaultRoute(currentUser.role) : "/login"} replace />} />
+      <Route path="/reports" element={currentUser?.role === "SHOP_OWNER" ? <ERPShell><ReportsPage movements={movements} products={products} activeShopId={activeShopId} receipts={receipts} saveReceipts={saveReceipts} onPaymentReceipt={handlePaymentReceipt} toast={toast} /></ERPShell> : <Navigate to={currentUser ? getDefaultRoute(currentUser.role) : "/login"} replace />} />
+      <Route path="/orders" element={currentUser?.role === "SHOP_OWNER" ? <ERPShell><OrdersPage /></ERPShell> : <Navigate to={currentUser ? getDefaultRoute(currentUser.role) : "/login"} replace />} />
+
+      {/* Marketplace routes — CUSTOMER or any authenticated user */}
+      <Route path="/marketplace" element={currentUser ? <MPShell><MarketplaceHome /></MPShell> : <Navigate to="/login" replace />} />
+      <Route path="/marketplace/orders" element={currentUser ? <MPShell><OrderTrackingPage onBack={() => navigate("/marketplace")} /></MPShell> : <Navigate to="/login" replace />} />
+      <Route path="/marketplace/pricing" element={currentUser ? <MPShell><PricingPage onBack={() => navigate("/marketplace")} /></MPShell> : <Navigate to="/login" replace />} />
+      <Route path="/marketplace/checkout" element={currentUser ? <MPShell><CheckoutPage onBack={() => navigate("/marketplace")} onOrderPlaced={() => navigate("/marketplace/orders")} /></MPShell> : <Navigate to="/login" replace />} />
+
+      {/* Admin */}
+      <Route path="/admin" element={currentUser?.role === "PLATFORM_ADMIN" ? <AdminShell><AdminPage /></AdminShell> : <Navigate to={currentUser ? getDefaultRoute(currentUser.role) : "/login"} replace />} />
+
+      {/* Catch-all: redirect to user's default route */}
+      <Route path="*" element={<Navigate to={currentUser ? getDefaultRoute(currentUser.role) : "/login"} replace />} />
+    </Routes>
+  );
+}
+
+// ========== EXPORT WITH ERROR BOUNDARY ==========
+export default function App() {
+  return (
+    <ErrorBoundary>
+      <AppContent />
+    </ErrorBoundary>
   );
 }
