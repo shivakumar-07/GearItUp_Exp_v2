@@ -68,6 +68,9 @@ model Shop {
   pincode     String?
   latitude    Decimal? @db.Decimal(9, 6)
   longitude   Decimal? @db.Decimal(9, 6)
+  shopDescription String?  @map("shop_description")
+  logoUrl         String?  @map("logo_url")
+  isVerified      Boolean  @default(false) @map("is_verified")
   isActive    Boolean  @default(true) @map("is_active")
   createdAt   DateTime @default(now()) @map("created_at")
   inventory   ShopInventory[]
@@ -86,20 +89,30 @@ model User {
   email         String?   @unique
   name          String?
   avatarUrl     String?   @map("avatar_url")
+  passwordHash  String?   @map("password_hash")
+  emailVerified Boolean   @default(false) @map("email_verified")
+  phoneVerified Boolean   @default(false) @map("phone_verified")
+  failedLogins  Int       @default(0) @map("failed_logins")
+  lockedUntil   DateTime? @map("locked_until")
   role          String    @default("CUSTOMER") // SHOP_OWNER, CUSTOMER, PLATFORM_ADMIN
   shopId        String?   @map("shop_id")
   shop          Shop?     @relation(fields: [shopId], references: [shopId])
   isActive      Boolean   @default(true) @map("is_active")
   createdAt     DateTime  @default(now()) @map("created_at")
   lastLoginAt   DateTime? @map("last_login_at")
+  providers     AuthProvider[]
+  profile       UserProfile?
+  settings      UserSettings?
 
   @@map("users")
 }
 
 model OtpCode {
   id        String   @id @default(uuid())
-  phone     String
+  phone     String?
+  email     String?
   code      String
+  type      String   @default("PHONE_OTP") // PHONE_OTP, EMAIL_VERIFY
   expiresAt DateTime @map("expires_at")
   used      Boolean  @default(false)
   createdAt DateTime @default(now()) @map("created_at")
@@ -259,4 +272,52 @@ model RefreshToken {
   createdAt DateTime @default(now()) @map("created_at")
 
   @@map("refresh_tokens")
+}
+
+model AuthProvider {
+  id         String   @id @default(uuid())
+  userId     String   @map("user_id")
+  provider   String   // EMAIL, PHONE, GOOGLE
+  providerId String   @map("provider_id")
+  linkedAt   DateTime @default(now()) @map("linked_at")
+  user       User     @relation(fields: [userId], references: [userId], onDelete: Cascade)
+
+  @@unique([provider, providerId])
+  @@map("auth_providers")
+}
+
+model PasswordResetToken {
+  id        String   @id @default(uuid())
+  userId    String   @map("user_id")
+  token     String   @unique
+  expiresAt DateTime @map("expires_at")
+  used      Boolean  @default(false)
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@map("password_reset_tokens")
+}
+
+model UserProfile {
+  id          String    @id @default(uuid())
+  userId      String    @unique @map("user_id")
+  gender      String?
+  dateOfBirth DateTime? @map("date_of_birth") @db.Date
+  addresses   Json?     @default("[]")
+  user        User      @relation(fields: [userId], references: [userId], onDelete: Cascade)
+  createdAt   DateTime  @default(now()) @map("created_at")
+  updatedAt   DateTime  @updatedAt @map("updated_at")
+
+  @@map("user_profiles")
+}
+
+model UserSettings {
+  id                   String  @id @default(uuid())
+  userId               String  @unique @map("user_id")
+  notificationsEnabled Boolean @default(true) @map("notifications_enabled")
+  emailNotifications   Boolean @default(true) @map("email_notifications")
+  smsNotifications     Boolean @default(true) @map("sms_notifications")
+  darkMode             Boolean @default(true) @map("dark_mode")
+  user                 User    @relation(fields: [userId], references: [userId], onDelete: Cascade)
+
+  @@map("user_settings")
 }

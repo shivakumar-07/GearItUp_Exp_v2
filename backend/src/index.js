@@ -4,7 +4,7 @@ config({ override: true });
 import express from 'express';
 import cors from 'cors';
 import cookieParser from 'cookie-parser';
-import authRoutes from './routes/auth.js';
+import authRoutes from './routes/auth/index.js';
 import catalogRoutes from './routes/catalog.js';
 import inventoryRoutes from './routes/inventory.js';
 import billingRoutes from './routes/billing.js';
@@ -12,22 +12,35 @@ import partiesRoutes from './routes/parties.js';
 import dashboardRoutes from './routes/dashboard.js';
 import marketplaceRoutes from './routes/marketplace.js';
 import { errorHandler } from './middleware/errorHandler.js';
+import { authLimiter } from './middleware/rateLimiter.js';
 
 const app = express();
 const PORT = process.env.PORT || 3001;
 
+const allowedOrigins = (
+  process.env.FRONTEND_URL
+    ? process.env.FRONTEND_URL.split(',').map((o) => o.trim()).filter(Boolean)
+    : ['http://localhost:5173', 'http://localhost:5174', 'http://localhost:5175']
+);
+
 app.use(cors({
-  origin: process.env.FRONTEND_URL || 'http://localhost:5173',
+  origin: (origin, callback) => {
+    // Allow non-browser clients and same-origin requests without an Origin header.
+    if (!origin) return callback(null, true);
+    if (allowedOrigins.includes(origin)) return callback(null, true);
+    return callback(new Error(`CORS blocked for origin: ${origin}`));
+  },
   credentials: true,
 }));
 app.use(express.json({ limit: '10mb' }));
 app.use(cookieParser());
 
+
 // Health check
 app.get('/health', (req, res) => res.json({ status: 'ok', timestamp: new Date().toISOString() }));
 
 // Routes
-app.use('/api/auth', authRoutes);
+app.use('/api/auth', authLimiter, authRoutes);
 app.use('/api/catalog', catalogRoutes);
 app.use('/api/shop/inventory', inventoryRoutes);
 app.use('/api/billing', billingRoutes);

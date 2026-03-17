@@ -150,13 +150,14 @@ export function ProfileDropdown({ user, onLogout }) {
 
           {/* Menu items */}
           <div style={{ padding: "6px 0" }}>
+            <MenuItem icon="👤" label="My Profile" onClick={() => { setOpen(false); navigate("/profile"); }} />
+            <MenuItem icon="⚙️" label="Settings" onClick={() => { setOpen(false); navigate("/settings"); }} />
             {user?.role === "SHOP_OWNER" && (
               <>
                 <MenuItem icon="🏪" label="My Shop Details" onClick={() => { setOpen(false); navigate("/dashboard"); }} />
                 <MenuItem icon="👥" label="Manage Staff" onClick={() => { setOpen(false); navigate("/parties"); }} />
               </>
             )}
-            <MenuItem icon="📊" label="Reports" onClick={() => { setOpen(false); navigate("/reports"); }} />
           </div>
 
           <div style={{ height: 1, background: T.border, margin: "0 12px" }} />

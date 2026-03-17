@@ -24,3 +24,6 @@ dist-ssr
 *.sw?
 repomix-output.xml
 .vite
+
+# Local secrets — never commit these
+.env.resend

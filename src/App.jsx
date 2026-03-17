@@ -12,6 +12,9 @@ import { ProfileDropdown } from "./components/ProfileDropdown";
 import { Avatar } from "./components/Avatar";
 import { ProductModal } from "./components/ProductModal";
 import LoginPage from "./pages/LoginPage";
+import ResetPasswordPage from "./pages/ResetPasswordPage";
+import { ProfilePage } from "./pages/ProfilePage";
+import { SettingsPage } from "./pages/SettingsPage";
 
 // ERP Pages
 import { DashboardPage } from "./pages/DashboardPage";
@@ -384,6 +387,7 @@ function AppContent() {
     <Routes>
       {/* Public */}
       <Route path="/login" element={currentUser ? <Navigate to={getDefaultRoute(currentUser.role)} replace /> : <LoginPage onLogin={handleLogin} />} />
+      <Route path="/reset-password" element={<ResetPasswordPage />} />
 
       {/* ERP routes — SHOP_OWNER */}
       <Route path="/dashboard" element={currentUser?.role === "SHOP_OWNER" ? <ERPShell><DashboardPage products={products} movements={movements} orders={orders} activeShopId={activeShopId} onNavigate={(p) => navigate("/" + p)} jobCards={jobCards} parties={parties} vehicles={vehicles} /></ERPShell> : <Navigate to={currentUser ? getDefaultRoute(currentUser.role) : "/login"} replace />} />
@@ -400,6 +404,10 @@ function AppContent() {
       <Route path="/marketplace/orders" element={currentUser ? <MPShell><OrderTrackingPage onBack={() => navigate("/marketplace")} /></MPShell> : <Navigate to="/login" replace />} />
       <Route path="/marketplace/pricing" element={currentUser ? <MPShell><PricingPage onBack={() => navigate("/marketplace")} /></MPShell> : <Navigate to="/login" replace />} />
       <Route path="/marketplace/checkout" element={currentUser ? <MPShell><CheckoutPage onBack={() => navigate("/marketplace")} onOrderPlaced={() => navigate("/marketplace/orders")} /></MPShell> : <Navigate to="/login" replace />} />
+
+      {/* Profile & Settings (authenticated) */}
+      <Route path="/profile" element={currentUser ? <ProfilePage user={currentUser} onUserUpdate={(u) => setCurrentUser(u)} /> : <Navigate to="/login" replace />} />
+      <Route path="/settings" element={currentUser ? <SettingsPage onLogout={handleLogout} /> : <Navigate to="/login" replace />} />
 
       {/* Admin */}
       <Route path="/admin" element={currentUser?.role === "PLATFORM_ADMIN" ? <AdminShell><AdminPage /></AdminShell> : <Navigate to={currentUser ? getDefaultRoute(currentUser.role) : "/login"} replace />} />
