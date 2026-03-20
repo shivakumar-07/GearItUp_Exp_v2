@@ -110,7 +110,7 @@ router.post('/firebase', async (req, res, next) => {
       await ensureAuthProvider(user.userId, 'EMAIL', normalizeEmail(user.email));
     }
 
-    const payload = await createSession(res, user, { isNewUser });
+    const payload = await createSession(res, user, { isNewUser, req });
 
     // BACKWARDS COMPAT: include data wrapper for existing frontend
     res.json({

@@ -35,35 +35,55 @@ export const getDeliveryEtaFromDistance = (distanceKm) => {
 // VEHICLE FITMENT CHECKER
 // ═══════════════════════════════════════════════════════════════
 export const checkFitment = (product, vehicleCtx) => {
-  if (!vehicleCtx || !product) return { compatible: false, type: null };
+  if (!product) return { compatible: false, type: null };
+
+  // ── API-sourced products carry fitmentType directly ──────────
+  // When the browse endpoint returns data, fitmentType is already resolved.
+  if (product.fitmentType !== undefined && product.fitmentType !== null) {
+    return { compatible: true, type: product.fitmentType };
+  }
+  if (product.fitmentType === null && product.requiresFitment) {
+    // requires_fitment = true but no match → exclude when vehicle is set
+    return { compatible: vehicleCtx ? false : true, type: null };
+  }
+
+  // ── Universal parts: always compatible ───────────────────────
+  if (product.isUniversal) return { compatible: true, type: "universal" };
+
+  if (!vehicleCtx) {
+    // No vehicle context: show everything (default listing behaviour)
+    return { compatible: true, type: null };
+  }
 
   const compatibility = product.compatibility || product.compatibleVehicles || [];
 
-  // Empty compatibility = universal fit
-  if (compatibility.length === 0) return { compatible: true, type: "universal" };
+  // Empty compatibility list + no requires_fitment flag = universal
+  if (compatibility.length === 0 && !product.requiresFitment) {
+    return { compatible: true, type: "universal" };
+  }
 
   // Check by vehicle ID
   if (vehicleCtx.id && compatibility.includes(vehicleCtx.id)) {
     return { compatible: true, type: "exact" };
   }
 
-  // Check by string matching (brand + model)
+  // Check by string matching (brand + model) for mock/seed data
   const vehicleStr = `${vehicleCtx.brand} ${vehicleCtx.model}`.toLowerCase();
-  if (compatibility.some(v => {
-    if (typeof v === "string") {
-      // Check if it's a vehicle ID format or a string match
-      const matchVehicle = VEHICLES.find(veh => veh.id === v);
-      if (matchVehicle) {
-        return `${matchVehicle.brand} ${matchVehicle.model}`.toLowerCase() === vehicleStr;
-      }
-      return v.toLowerCase().includes(vehicleStr) || vehicleStr.includes(v.toLowerCase());
+  const stringMatch = compatibility.some(v => {
+    if (typeof v !== "string") return false;
+    const matchVehicle = VEHICLES.find(veh => veh.id === v);
+    if (matchVehicle) {
+      return `${matchVehicle.brand} ${matchVehicle.model}`.toLowerCase() === vehicleStr;
     }
-    return false;
-  })) {
-    return { compatible: true, type: "exact" };
-  }
+    return v.toLowerCase().includes(vehicleStr) || vehicleStr.includes(v.toLowerCase());
+  });
+  if (stringMatch) return { compatible: true, type: "exact" };
 
-  return { compatible: false, type: null };
+  // requires_fitment = true but no match found → incompatible
+  if (product.requiresFitment) return { compatible: false, type: null };
+
+  // Non-fitment-required part with no explicit compatibility = compatible (generic)
+  return { compatible: true, type: "universal" };
 };
 
 // ═══════════════════════════════════════════════════════════════

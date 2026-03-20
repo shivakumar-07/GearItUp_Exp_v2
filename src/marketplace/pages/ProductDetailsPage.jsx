@@ -1,8 +1,9 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import { T, FONT } from "../../theme";
 import { useStore } from "../../store";
 import { fmt, getStarRating, renderStars } from "../../utils";
 import { checkFitment, getNearDistance, getDeliveryEtaFromDistance } from "../api/engine";
+import { api } from "../../api/client.js";
 
 export function ProductDetailsPage({ productId, onBack }) {
     const { products, shops, selectedVehicle, cart, saveCart } = useStore();
@@ -10,13 +11,20 @@ export function ProductDetailsPage({ productId, onBack }) {
     const [addedToCartShop, setAddedToCartShop] = useState(null);
     const [qty, setQty] = useState(1);
 
-    // Find the master product and all listings
+    // API-fetched product data (used when local store doesn't have the product)
+    const [apiProduct, setApiProduct] = useState(null);
+    const [apiLoading, setApiLoading] = useState(false);
+    const [apiFailed, setApiFailed] = useState(false);
+
+    // Find the master product and all listings from LOCAL store
     const safeProducts = products || [];
     const safeShops = shops || [];
 
-    const productData = useMemo(() => {
-        // Find all matching products across shops
-        const matching = safeProducts.filter(p => p.id === productId || p.sku === productId);
+    const localProductData = useMemo(() => {
+        // Match by id, sku, OR masterPartId (marketplace uses masterPartId as the product ID)
+        const matching = safeProducts.filter(p =>
+            p.id === productId || p.sku === productId || p.masterPartId === productId
+        );
         if (matching.length === 0) return null;
 
         const master = matching[0];
@@ -54,6 +62,112 @@ export function ProductDetailsPage({ productId, onBack }) {
 
         return { master, listings };
     }, [productId, safeProducts, safeShops]);
+
+    // If not found locally, fetch from API
+    useEffect(() => {
+        if (localProductData) return; // Found locally, no need to fetch
+        if (apiProduct) return; // Already fetched
+        if (apiFailed) return; // Already tried and failed
+
+        let cancelled = false;
+        setApiLoading(true);
+
+        (async () => {
+            try {
+                // Try the marketplace catalog endpoint for full product + shop listings
+                const res = await api.get(`/api/marketplace/catalog/${productId}`);
+                if (cancelled) return;
+
+                const raw = res.data || res;
+                // The backend returns { part: {...}, listings: [...], reviews, reviewStats }
+                const p = raw.part || raw;
+                const apiListings = raw.listings || raw.shops || [];
+
+                if (!p || !p.masterPartId) {
+                    setApiFailed(true);
+                    setApiLoading(false);
+                    return;
+                }
+
+                // Map API response to the shape ProductDetailsPage expects
+                const master = {
+                    id: p.masterPartId,
+                    masterPartId: p.masterPartId,
+                    name: p.partName,
+                    brand: p.brand || '',
+                    sku: p.oemNumber || p.masterPartId.slice(0, 8),
+                    oemNumber: p.oemNumber || '',
+                    oem_part_no: p.oemNumber || '',
+                    category: p.categoryL1 || 'General',
+                    categoryL2: p.categoryL2 || '',
+                    description: p.description || '',
+                    specifications: p.specifications || {},
+                    hsnCode: p.hsnCode || '',
+                    gstRate: p.gstRate || 18,
+                    unitOfSale: p.unitOfSale || 'Piece',
+                    isUniversal: p.isUniversal,
+                    requiresFitment: p.requiresFitment,
+                    image: p.imageUrl || null,
+                    imageUrl: p.imageUrl || null,
+                    compatibility: p.fitments || [],
+                };
+
+                const listings = apiListings.map(shop => {
+                    const dist = shop.distance ?? 5;
+                    const price = parseFloat(shop.price || shop.sellingPrice || 0);
+                    const mrp = Math.round(price * 1.25);
+                    const discount = mrp > price ? Math.round(((mrp - price) / mrp) * 100) : 0;
+                    const eta = getDeliveryEtaFromDistance(dist);
+
+                    return {
+                        product_id: p.masterPartId,
+                        shop_id: shop.shopId,
+                        shop: {
+                            id: shop.shopId,
+                            name: shop.shopName || 'Local Shop',
+                            address: shop.shopAddress || '',
+                            city: shop.shopCity || '',
+                            isVerified: shop.isVerified || false,
+                            rating: shop.rating || 4.2,
+                            reviews: shop.reviewCount || 0,
+                        },
+                        distance: dist,
+                        eta,
+                        selling_price: price,
+                        buying_price: 0,
+                        mrp,
+                        discount,
+                        stock_quantity: shop.stockQty || 0,
+                        min_stock: 5,
+                        buyBoxScore: 50,
+                        total_sales: 0,
+                    };
+                }).sort((a, b) => a.distance - b.distance);
+
+                setApiProduct({ master, listings });
+            } catch (err) {
+                console.warn('[PDP] API fetch failed:', err.message);
+                if (!cancelled) setApiFailed(true);
+            } finally {
+                if (!cancelled) setApiLoading(false);
+            }
+        })();
+
+        return () => { cancelled = true; };
+    }, [productId, localProductData, apiProduct, apiFailed]);
+
+    // Use local data first, then API data
+    const productData = localProductData || apiProduct;
+
+    // Loading state
+    if (apiLoading && !productData) {
+        return (
+            <div style={{ maxWidth: 900, margin: "0 auto", padding: "60px 20px", textAlign: "center" }}>
+                <div style={{ fontSize: 48, marginBottom: 16, animation: "pulse 1.2s infinite" }}>⚙️</div>
+                <div style={{ fontSize: 16, fontWeight: 700, color: T.t3 }}>Loading product details…</div>
+            </div>
+        );
+    }
 
     if (!productData) {
         return (

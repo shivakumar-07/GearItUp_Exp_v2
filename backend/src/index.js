@@ -11,6 +11,8 @@ import billingRoutes from './routes/billing.js';
 import partiesRoutes from './routes/parties.js';
 import dashboardRoutes from './routes/dashboard.js';
 import marketplaceRoutes from './routes/marketplace.js';
+import customerRoutes from './routes/customer.js';
+import staffRoutes from './routes/staff.js';
 import { errorHandler } from './middleware/errorHandler.js';
 import { authLimiter } from './middleware/rateLimiter.js';
 
@@ -47,6 +49,8 @@ app.use('/api/billing', billingRoutes);
 app.use('/api/shop/parties', partiesRoutes);
 app.use('/api/shop/dashboard', dashboardRoutes);
 app.use('/api/marketplace', marketplaceRoutes);
+app.use('/api/customer', customerRoutes);
+app.use('/api/shop/staff', staffRoutes);
 
 // 404 handler
 app.use((req, res) => res.status(404).json({ error: 'Route not found' }));

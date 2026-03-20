@@ -19,28 +19,44 @@ model Vehicle {
   engineCode   String?  @map("engine_code")
   transmission String?
   bodyType     String?  @map("body_type")
+  absEquipped  Boolean  @default(false) @map("abs_equipped")
+  vehicleType  String   @default("Car") @map("vehicle_type") // Car / Motorcycle / Commercial / Tractor
   fitments     PartFitment[]
+  garageVehicles CustomerVehicleGarage[]
 
   @@map("vehicles")
 }
 
 model MasterPart {
-  masterPartId String   @id @default(uuid()) @map("master_part_id")
-  oemNumber    String?  @map("oem_number")
-  partName     String   @map("part_name")
-  brand        String?
-  categoryL1   String?  @map("category_l1")
-  categoryL2   String?  @map("category_l2")
-  hsnCode      String?  @map("hsn_code")
-  gstRate      Decimal  @default(18.00) @map("gst_rate")
-  unitOfSale   String   @default("Piece") @map("unit_of_sale")
-  description  String?
-  imageUrl     String?  @map("image_url")
-  status       String   @default("PENDING") // VERIFIED, PENDING, REJECTED
-  source       String   @default("MANUAL")  // SUPPLIER, CONTRIBUTED, LICENSED
-  createdAt    DateTime @default(now()) @map("created_at")
-  fitments     PartFitment[]
-  inventory    ShopInventory[]
+  masterPartId   String   @id @default(uuid()) @map("master_part_id")
+  // ─── Layer 2: Lookup keys ──────────────────────────────────────────────────
+  oemNumber      String?  @map("oem_number")
+  oemNumbers     String[] @default([]) @map("oem_numbers")
+  barcodes       String[] @default([]) @map("barcodes")
+  // ─── Layer 1: Catalog data ────────────────────────────────────────────────
+  partName       String   @map("part_name")
+  brand          String?
+  categoryL1     String?  @map("category_l1")
+  categoryL2     String?  @map("category_l2")
+  hsnCode        String?  @map("hsn_code")
+  gstRate        Decimal  @default(18.00) @map("gst_rate")
+  unitOfSale     String   @default("Piece") @map("unit_of_sale")
+  description    String?
+  specifications Json?    @map("specifications")
+  // ─── Images ───────────────────────────────────────────────────────────────
+  imageUrl        String?  @map("image_url")
+  images          String[] @default([]) @map("images")
+  // ─── Fitment classification ───────────────────────────────────────────────
+  isUniversal     Boolean  @default(false) @map("is_universal")      // true = applies to all vehicles (oils, fuses, etc.)
+  requiresFitment Boolean  @default(false) @map("requires_fitment")  // true = MUST have fitment record to display for a vehicle
+  // ─── Quality / source ─────────────────────────────────────────────────────
+  status         String   @default("PENDING") // VERIFIED, PENDING, REJECTED
+  source         String   @default("MANUAL")  // SUPPLIER, CONTRIBUTED, LICENSED, TECDOC
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+  fitments       PartFitment[]
+  inventory      ShopInventory[]
+  reviews        MarketplaceReview[]
 
   @@map("master_parts")
 }
@@ -50,6 +66,8 @@ model PartFitment {
   masterPartId String     @map("master_part_id")
   vehicleId    String     @map("vehicle_id")
   fitType      String     @map("fit_type") // EXACT, COMPATIBLE, UNIVERSAL
+  position     String?                     // Front Left, Rear Right, All, etc.
+  source       String     @default("SHOP_CONFIRMED") // OEM_DATA, SHOP_CONFIRMED, CROWDSOURCED, LICENSED
   notes        String?
   masterPart   MasterPart @relation(fields: [masterPartId], references: [masterPartId])
   vehicle      Vehicle    @relation(fields: [vehicleId], references: [vehicleId])
@@ -58,83 +76,116 @@ model PartFitment {
 }
 
 model Shop {
-  shopId      String   @id @default(uuid()) @map("shop_id")
-  name        String
-  ownerName   String?  @map("owner_name")
-  phone       String   @unique
-  gstin       String?
-  address     String?
-  city        String?
-  pincode     String?
-  latitude    Decimal? @db.Decimal(9, 6)
-  longitude   Decimal? @db.Decimal(9, 6)
+  shopId          String   @id @default(uuid()) @map("shop_id")
+  name            String
+  ownerName       String?  @map("owner_name")
+  phone           String   @unique
+  gstin           String?
+  address         String?
+  city            String?
+  pincode         String?
+  latitude        Decimal? @db.Decimal(9, 6)
+  longitude       Decimal? @db.Decimal(9, 6)
   shopDescription String?  @map("shop_description")
   logoUrl         String?  @map("logo_url")
   isVerified      Boolean  @default(false) @map("is_verified")
-  isActive    Boolean  @default(true) @map("is_active")
-  createdAt   DateTime @default(now()) @map("created_at")
-  inventory   ShopInventory[]
-  movements   Movement[]
-  invoices    Invoice[]
-  parties     Party[]
-  users       User[]
+  isActive        Boolean  @default(true) @map("is_active")
+  createdAt       DateTime @default(now()) @map("created_at")
+  inventory       ShopInventory[]
+  movements       Movement[]
+  invoices        Invoice[]
+  parties         Party[]
+  users           User[]
+  shopUsers       ShopUser[]
 
   @@map("shops")
 }
 
+// ─── LAYER 1: Universal Identity Record ──────────────────────────────────────
+// One row per person regardless of role. Mirrors what Supabase auth.users would
+// contain but managed entirely by our Express auth service.
 model User {
   userId        String    @id @default(uuid()) @map("user_id")
-  firebaseUid   String?   @unique @map("firebase_uid")  // Firebase Auth UID
+  // ── Auth provider UIDs ──────────────────────────────────────────────────────
+  firebaseUid   String?   @unique @map("firebase_uid")  // Legacy: Firebase Auth UID
+  googleId      String?   @unique @map("google_id")     // Google OAuth sub claim
+  // ── Identity ────────────────────────────────────────────────────────────────
   phone         String?   @unique
   email         String?   @unique
   name          String?
   avatarUrl     String?   @map("avatar_url")
   passwordHash  String?   @map("password_hash")
+  // ── Verification flags ──────────────────────────────────────────────────────
   emailVerified Boolean   @default(false) @map("email_verified")
   phoneVerified Boolean   @default(false) @map("phone_verified")
+  isVerified    Boolean   @default(false) @map("is_verified")  // true once any method verified
+  // ── Security ────────────────────────────────────────────────────────────────
   failedLogins  Int       @default(0) @map("failed_logins")
   lockedUntil   DateTime? @map("locked_until")
-  role          String    @default("CUSTOMER") // SHOP_OWNER, CUSTOMER, PLATFORM_ADMIN
+  // ── Role & tenant ───────────────────────────────────────────────────────────
+  role          String    @default("CUSTOMER") // SHOP_OWNER, CUSTOMER, PLATFORM_ADMIN, SHOP_STAFF
   shopId        String?   @map("shop_id")
   shop          Shop?     @relation(fields: [shopId], references: [shopId])
+  // ── Activity tracking (mirrors what the document prescribes) ───────────────
+  loginCount    Int       @default(0) @map("login_count")
+  lastLoginAt   DateTime? @map("last_login_at")
   isActive      Boolean   @default(true) @map("is_active")
   createdAt     DateTime  @default(now()) @map("created_at")
-  lastLoginAt   DateTime? @map("last_login_at")
-  providers     AuthProvider[]
-  profile       UserProfile?
-  settings      UserSettings?
+  updatedAt     DateTime  @updatedAt @map("updated_at")
+  // ── Relations ────────────────────────────────────────────────────────────────
+  providers        AuthProvider[]
+  refreshTokens    RefreshToken[]
+  profile          UserProfile?
+  settings         UserSettings?
+  customerProfile  CustomerProfile?
+  addresses        CustomerAddress[]
+  garageVehicles   CustomerVehicleGarage[]
+  shopUsers        ShopUser[]
+  adminProfile     AdminProfile?
 
   @@map("users")
 }
 
+// ─── LAYER 1: OTP attempts — DB-backed so failure counts survive restarts ────
 model OtpCode {
-  id        String   @id @default(uuid())
-  phone     String?
-  email     String?
-  code      String
-  type      String   @default("PHONE_OTP") // PHONE_OTP, EMAIL_VERIFY
-  expiresAt DateTime @map("expires_at")
-  used      Boolean  @default(false)
-  createdAt DateTime @default(now()) @map("created_at")
+  id          String    @id @default(uuid())
+  phone       String?
+  email       String?
+  code        String    // hashed OTP
+  type        String    @default("PHONE_OTP") // PHONE_OTP, EMAIL_VERIFY
+  attempts    Int       @default(0)           // failed verification attempts
+  ipAddress   String?   @map("ip_address")   // client IP for abuse detection
+  expiresAt   DateTime  @map("expires_at")
+  verifiedAt  DateTime? @map("verified_at")  // null = not yet verified
+  used        Boolean   @default(false)
+  createdAt   DateTime  @default(now()) @map("created_at")
 
+  // Fast lookup: find the latest unused OTP for a phone number
+  @@index([phone, expiresAt(sort: Desc)])
   @@map("otp_codes")
 }
 
 model ShopInventory {
-  inventoryId         String   @id @default(uuid()) @map("inventory_id")
-  shopId              String   @map("shop_id")
-  masterPartId        String   @map("master_part_id")
-  sellingPrice        Decimal  @map("selling_price") @db.Decimal(10, 2)
-  buyingPrice         Decimal? @map("buying_price") @db.Decimal(10, 2)
-  stockQty            Int      @default(0) @map("stock_qty")
-  reservedQty         Int      @default(0) @map("reserved_qty")
-  minStockAlert       Int      @default(5) @map("min_stock_alert")
-  rackLocation        String?  @map("rack_location")
-  isMarketplaceListed Boolean  @default(false) @map("is_marketplace_listed")
-  shop                Shop     @relation(fields: [shopId], references: [shopId])
+  inventoryId         String    @id @default(uuid()) @map("inventory_id")
+  shopId              String    @map("shop_id")
+  masterPartId        String    @map("master_part_id")
+  sellingPrice        Decimal   @map("selling_price") @db.Decimal(10, 2)
+  buyingPrice         Decimal?  @map("buying_price") @db.Decimal(10, 2)
+  stockQty            Int       @default(0) @map("stock_qty")
+  reservedQty         Int       @default(0) @map("reserved_qty")
+  minStockAlert       Int       @default(5) @map("min_stock_alert")
+  rackLocation        String?   @map("rack_location")
+  shopSpecificNotes   String?   @map("shop_specific_notes")
+  isMarketplaceListed Boolean   @default(false) @map("is_marketplace_listed")
+  lastPurchasedAt     DateTime? @map("last_purchased_at")
+  lastSoldAt          DateTime? @map("last_sold_at")
+  createdAt           DateTime  @default(now()) @map("created_at")
+  updatedAt           DateTime  @updatedAt @map("updated_at")
+  shop                Shop      @relation(fields: [shopId], references: [shopId])
   masterPart          MasterPart @relation(fields: [masterPartId], references: [masterPartId])
   movements           Movement[]
   invoiceItems        InvoiceItem[]
+  reviews             MarketplaceReview[]
 
   @@unique([shopId, masterPartId])
   @@map("shop_inventory")
@@ -161,31 +212,31 @@ model Movement {
 }
 
 model Invoice {
-  invoiceId     String   @id @default(uuid()) @map("invoice_id")
-  invoiceNumber String   @unique @map("invoice_number") // YYYYMM-0001 format
-  shopId        String   @map("shop_id")
-  partyId       String?  @map("party_id")
-  partyName     String?  @map("party_name")
-  partyPhone    String?  @map("party_phone")
-  partyGstin    String?  @map("party_gstin")
-  subtotal      Decimal  @db.Decimal(10, 2)
-  discountAmount Decimal @default(0) @map("discount_amount") @db.Decimal(10, 2)
-  taxableAmount Decimal  @map("taxable_amount") @db.Decimal(10, 2)
-  cgst          Decimal  @db.Decimal(10, 2)
-  sgst          Decimal  @db.Decimal(10, 2)
-  igst          Decimal  @default(0) @db.Decimal(10, 2)
-  totalAmount   Decimal  @map("total_amount") @db.Decimal(10, 2)
-  paymentMode   String   @map("payment_mode") // CASH, UPI, CREDIT, SPLIT
-  cashAmount    Decimal? @map("cash_amount") @db.Decimal(10, 2)
-  upiAmount     Decimal? @map("upi_amount") @db.Decimal(10, 2)
-  creditAmount  Decimal? @map("credit_amount") @db.Decimal(10, 2)
-  pdfUrl        String?  @map("pdf_url")
-  status        String   @default("PAID") // PAID, CREDIT, CANCELLED
-  notes         String?
-  createdAt     DateTime @default(now()) @map("created_at")
-  shop          Shop     @relation(fields: [shopId], references: [shopId])
-  party         Party?   @relation(fields: [partyId], references: [partyId])
-  items         InvoiceItem[]
+  invoiceId      String   @id @default(uuid()) @map("invoice_id")
+  invoiceNumber  String   @unique @map("invoice_number") // YYYYMM-0001 format
+  shopId         String   @map("shop_id")
+  partyId        String?  @map("party_id")
+  partyName      String?  @map("party_name")
+  partyPhone     String?  @map("party_phone")
+  partyGstin     String?  @map("party_gstin")
+  subtotal       Decimal  @db.Decimal(10, 2)
+  discountAmount Decimal  @default(0) @map("discount_amount") @db.Decimal(10, 2)
+  taxableAmount  Decimal  @map("taxable_amount") @db.Decimal(10, 2)
+  cgst           Decimal  @db.Decimal(10, 2)
+  sgst           Decimal  @db.Decimal(10, 2)
+  igst           Decimal  @default(0) @db.Decimal(10, 2)
+  totalAmount    Decimal  @map("total_amount") @db.Decimal(10, 2)
+  paymentMode    String   @map("payment_mode") // CASH, UPI, CREDIT, SPLIT
+  cashAmount     Decimal? @map("cash_amount") @db.Decimal(10, 2)
+  upiAmount      Decimal? @map("upi_amount") @db.Decimal(10, 2)
+  creditAmount   Decimal? @map("credit_amount") @db.Decimal(10, 2)
+  pdfUrl         String?  @map("pdf_url")
+  status         String   @default("PAID") // PAID, CREDIT, CANCELLED
+  notes          String?
+  createdAt      DateTime @default(now()) @map("created_at")
+  shop           Shop     @relation(fields: [shopId], references: [shopId])
+  party          Party?   @relation(fields: [partyId], references: [partyId])
+  items          InvoiceItem[]
 
   @@map("invoices")
 }
@@ -219,7 +270,7 @@ model Party {
   address       String?
   type          String   @default("CUSTOMER") // CUSTOMER, SUPPLIER, BOTH
   creditLimit   Decimal  @default(0) @map("credit_limit") @db.Decimal(10, 2)
-  outstanding   Decimal  @default(0) @db.Decimal(10, 2) // cached, recompute from movements
+  outstanding   Decimal  @default(0) @db.Decimal(10, 2)
   notes         String?
   isActive      Boolean  @default(true) @map("is_active")
   createdAt     DateTime @default(now()) @map("created_at")
@@ -229,24 +280,44 @@ model Party {
   @@map("parties")
 }
 
+model MarketplaceReview {
+  reviewId        String    @id @default(uuid()) @map("review_id")
+  masterPartId    String    @map("master_part_id")
+  inventoryId     String?   @map("inventory_id")
+  orderId         String?   @map("order_id")
+  customerName    String    @map("customer_name")
+  customerPhone   String?   @map("customer_phone")
+  rating          Int
+  title           String?
+  body            String?
+  verifiedPurchase Boolean  @default(false) @map("verified_purchase")
+  helpfulCount    Int       @default(0) @map("helpful_count")
+  isHidden        Boolean   @default(false) @map("is_hidden")
+  createdAt       DateTime  @default(now()) @map("created_at")
+  masterPart      MasterPart   @relation(fields: [masterPartId], references: [masterPartId])
+  inventory       ShopInventory? @relation(fields: [inventoryId], references: [inventoryId])
+
+  @@map("marketplace_reviews")
+}
+
 model MarketplaceOrder {
-  orderId        String   @id @default(uuid()) @map("order_id")
-  orderNumber    String   @unique @map("order_number")
-  customerId     String?  @map("customer_id")
-  customerPhone  String   @map("customer_phone")
-  customerName   String?  @map("customer_name")
-  shopId         String   @map("shop_id")
-  subtotal       Decimal  @db.Decimal(10, 2)
-  deliveryFee    Decimal  @default(0) @map("delivery_fee") @db.Decimal(10, 2)
-  total          Decimal  @db.Decimal(10, 2)
-  deliveryAddress String? @map("delivery_address")
-  status         String   @default("PENDING") // PENDING, CONFIRMED, PACKED, DISPATCHED, DELIVERED, CANCELLED
-  razorpayOrderId String? @map("razorpay_order_id")
+  orderId         String   @id @default(uuid()) @map("order_id")
+  orderNumber     String   @unique @map("order_number")
+  customerId      String?  @map("customer_id")
+  customerPhone   String   @map("customer_phone")
+  customerName    String?  @map("customer_name")
+  shopId          String   @map("shop_id")
+  subtotal        Decimal  @db.Decimal(10, 2)
+  deliveryFee     Decimal  @default(0) @map("delivery_fee") @db.Decimal(10, 2)
+  total           Decimal  @db.Decimal(10, 2)
+  deliveryAddress String?  @map("delivery_address")
+  status          String   @default("PENDING")
+  razorpayOrderId   String? @map("razorpay_order_id")
   razorpayPaymentId String? @map("razorpay_payment_id")
-  notes          String?
-  createdAt      DateTime @default(now()) @map("created_at")
-  updatedAt      DateTime @updatedAt @map("updated_at")
-  items          MarketplaceOrderItem[]
+  notes           String?
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+  items           MarketplaceOrderItem[]
 
   @@map("marketplace_orders")
 }
@@ -264,13 +335,24 @@ model MarketplaceOrderItem {
   @@map("marketplace_order_items")
 }
 
+// ─── LAYER 1: Session management — SHA-256 hashed tokens, device tracking ────
+// Never store raw refresh tokens. Store the hash so a DB breach can't be replayed.
 model RefreshToken {
-  id        String   @id @default(uuid())
-  userId    String   @map("user_id")
-  token     String   @unique
-  expiresAt DateTime @map("expires_at")
-  createdAt DateTime @default(now()) @map("created_at")
+  id          String    @id @default(uuid())
+  userId      String    @map("user_id")
+  shopId      String?   @map("shop_id")      // which tenant context this session belongs to
+  tokenHash   String    @unique @map("token_hash")  // SHA-256(rawToken) — primary lookup key
+  token       String    @map("token")                // legacy column — same SHA-256 hash value
+  deviceInfo  Json      @default("{}") @map("device_info")  // { ua, platform, browser }
+  ipAddress   String?   @map("ip_address")
+  expiresAt   DateTime  @map("expires_at")
+  lastUsedAt  DateTime? @map("last_used_at") // updated on every refresh
+  revokedAt   DateTime? @map("revoked_at")   // null = active; set on logout/rotation
+  createdAt   DateTime  @default(now()) @map("created_at")
+  user        User      @relation(fields: [userId], references: [userId], onDelete: Cascade)
 
+  // Fast lookup: find active tokens for a user
+  @@index([userId])
   @@map("refresh_tokens")
 }
 
@@ -320,4 +402,101 @@ model UserSettings {
   user                 User    @relation(fields: [userId], references: [userId], onDelete: Cascade)
 
   @@map("user_settings")
+}
+
+// ─── LAYER 2: Role-Specific Profiles ─────────────────────────────────────────
+
+// Customer loyalty, wallet, notification prefs — only for CUSTOMER role users
+model CustomerProfile {
+  id                String   @id @default(uuid())
+  userId            String   @unique @map("user_id")
+  walletBalance     Decimal  @default(0) @map("wallet_balance") @db.Decimal(10, 2)
+  loyaltyPoints     Int      @default(0) @map("loyalty_points")
+  notificationPrefs Json     @default("{}") @map("notification_prefs")
+  totalOrders       Int      @default(0) @map("total_orders")
+  totalSpent        Decimal  @default(0) @map("total_spent") @db.Decimal(12, 2)
+  createdAt         DateTime @default(now()) @map("created_at")
+  updatedAt         DateTime @updatedAt @map("updated_at")
+  user              User     @relation(fields: [userId], references: [userId], onDelete: Cascade)
+
+  @@map("customer_profiles")
+}
+
+// Saved delivery addresses for marketplace orders
+model CustomerAddress {
+  addressId  String   @id @default(uuid()) @map("address_id")
+  userId     String   @map("user_id")
+  label      String   @default("Home")   // Home, Work, Other
+  fullName   String   @default("") @map("full_name")
+  phone      String   @default("")
+  line1      String   @default("")
+  line2      String?
+  landmark   String?
+  city       String   @default("")
+  state      String   @default("")
+  pincode    String   @default("")
+  latitude   Decimal? @db.Decimal(9, 6)
+  longitude  Decimal? @db.Decimal(9, 6)
+  isDefault  Boolean  @default(false) @map("is_default")
+  createdAt  DateTime @default(now()) @map("created_at")
+  user       User     @relation(fields: [userId], references: [userId], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("customer_addresses")
+}
+
+// Customer's garage — saved vehicles for fitment-guaranteed browsing
+model CustomerVehicleGarage {
+  garageId       String   @id @default(uuid()) @map("garage_id")
+  userId         String   @map("user_id")
+  vehicleId      String?  @map("vehicle_id")  // FK to vehicles catalog (optional)
+  vehicle        Vehicle? @relation(fields: [vehicleId], references: [vehicleId])
+  nickname       String?                       // "My Activa", "Dad's Swift"
+  make           String   @default("")
+  model          String   @default("")
+  variant        String?
+  year           Int      @default(0)
+  fuelType       String?  @map("fuel_type")
+  registrationNo String?  @map("registration_no")
+  yearOfPurchase Int?     @map("year_of_purchase")
+  isDefault      Boolean  @default(false) @map("is_default")
+  createdAt      DateTime @default(now()) @map("created_at")
+  user           User     @relation(fields: [userId], references: [userId], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("customer_vehicle_garage")
+}
+
+// Shop staff roster — links users to a shop with a role and permissions
+model ShopUser {
+  id           String    @id @default(uuid())
+  shopId       String    @map("shop_id")
+  userId       String    @map("user_id")
+  role         String    @default("CASHIER")  // OWNER, MANAGER, CASHIER, MECHANIC, DELIVERY
+  permissions  Json      @default("{}")        // { billing: true, inventory: true, reports: false, ... }
+  invitedBy    String?   @map("invited_by")   // userId of the person who invited them
+  isActive     Boolean   @default(true) @map("is_active")
+  joinedAt     DateTime  @default(now()) @map("joined_at")
+  lastActiveAt DateTime? @map("last_active_at")
+  shop         Shop      @relation(fields: [shopId], references: [shopId], onDelete: Cascade)
+  user         User      @relation(fields: [userId], references: [userId], onDelete: Cascade)
+
+  @@unique([shopId, userId])
+  @@index([shopId])
+  @@map("shop_users")
+}
+
+// Platform admin profile — internal ops team
+model AdminProfile {
+  id          String   @id @default(uuid())
+  userId      String   @unique @map("user_id")
+  adminRole   String   @default("SUPPORT") @map("admin_role")  // SUPER_ADMIN, OPS, SUPPORT, FINANCE
+  department  String?
+  permissions Json     @default("[]")          // list of permission strings
+  ipWhitelist String[] @default([]) @map("ip_whitelist")  // CIDR/IP strings for access control
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+  user        User     @relation(fields: [userId], references: [userId], onDelete: Cascade)
+
+  @@map("admin_profiles")
 }

@@ -1,7 +1,8 @@
 import jwt from 'jsonwebtoken';
+import { createHash, randomUUID } from 'crypto';
 import prisma from '../../db/prisma.js';
 
-// ─── Cookie config for refresh tokens ───
+// ─── Cookie config for refresh tokens ────────────────────────────────────────
 export const REFRESH_COOKIE_NAME = 'refresh_token';
 export const REFRESH_COOKIE_OPTIONS = {
   httpOnly: true,
@@ -10,6 +11,16 @@ export const REFRESH_COOKIE_OPTIONS = {
   maxAge: 30 * 24 * 60 * 60 * 1000, // 30 days
   path: '/api/auth',
 };
+
+/**
+ * Hash a refresh token for safe storage.
+ * We store SHA-256(rawToken) so a DB breach can't replay sessions.
+ * SHA-256 is appropriate here (unlike passwords) because refresh tokens
+ * are already high-entropy random JWTs — bcrypt's slow hash is unnecessary.
+ */
+export function hashToken(rawToken) {
+  return createHash('sha256').update(rawToken).digest('hex');
+}
 
 export function generateTokens(userId, shopId, role) {
   const accessToken = jwt.sign(
@@ -37,6 +48,8 @@ export function formatUserResponse(user) {
     shop: user.shop || null,
     emailVerified: user.emailVerified,
     phoneVerified: user.phoneVerified,
+    isVerified: user.isVerified || user.emailVerified || user.phoneVerified || false,
+    loginCount: user.loginCount || 0,
   };
 }
 
@@ -75,23 +88,57 @@ export async function findUserByEmailInsensitive(email, options = {}) {
 }
 
 /**
- * Create a session: generate tokens, store refresh token in DB, set cookie.
- * Returns the response payload (caller should res.json it).
+ * Extract lightweight device fingerprint from the request.
+ * Stored in device_info JSONB for session management UI ("Active sessions").
  */
-export async function createSession(res, user, { isNewUser = false } = {}) {
+function extractDeviceInfo(req) {
+  const ua = req.headers['user-agent'] || '';
+  const platform = /mobile|android|iphone|ipad/i.test(ua) ? 'mobile' : 'desktop';
+  const browser = /chrome/i.test(ua) ? 'Chrome'
+    : /firefox/i.test(ua) ? 'Firefox'
+    : /safari/i.test(ua) ? 'Safari'
+    : /edge/i.test(ua) ? 'Edge'
+    : 'Unknown';
+  return { ua: ua.slice(0, 200), platform, browser };
+}
+
+/**
+ * Create a session: generate tokens, store hashed refresh token in DB,
+ * set httpOnly cookie. Returns the JSON payload for the response.
+ */
+export async function createSession(res, user, { isNewUser = false, req = null } = {}) {
   const { accessToken, refreshToken } = generateTokens(user.userId, user.shopId, user.role);
+  const tokenHash = hashToken(refreshToken);
 
-  await prisma.refreshToken.create({
-    data: {
-      userId: user.userId,
-      token: refreshToken,
-      expiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
-    },
-  });
+  const deviceInfo = req ? extractDeviceInfo(req) : {};
+  const ipAddress = req ? (req.ip || req.connection?.remoteAddress || null) : null;
 
+  // Use raw SQL to write both token_hash and token columns (DB has both due to migration history).
+  // Prisma ORM is bypassed here because the generated client may lag behind the actual DB schema.
+  const rtId = randomUUID();
+  const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
+  await prisma.$executeRaw`
+    INSERT INTO refresh_tokens (id, user_id, shop_id, token_hash, token, device_info, ip_address, expires_at)
+    VALUES (
+      ${rtId},
+      ${user.userId},
+      ${user.shopId || null},
+      ${tokenHash},
+      ${tokenHash},
+      ${JSON.stringify(deviceInfo)}::jsonb,
+      ${ipAddress},
+      ${expiresAt}
+    )
+  `;
+
+  // Update last login + increment login counter + set isVerified
   await prisma.user.update({
     where: { userId: user.userId },
-    data: { lastLoginAt: new Date() },
+    data: {
+      lastLoginAt: new Date(),
+      loginCount: { increment: 1 },
+      isVerified: user.emailVerified || user.phoneVerified || false,
+    },
   });
 
   res.cookie(REFRESH_COOKIE_NAME, refreshToken, REFRESH_COOKIE_OPTIONS);
