@@ -27,3 +27,6 @@ repomix-output.xml
 
 # Local secrets — never commit these
 .env.resend
+
+.claude/
+.env*

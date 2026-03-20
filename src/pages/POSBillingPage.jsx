@@ -2,6 +2,7 @@ import { useState, useMemo, useRef, useEffect, useCallback } from "react";
 import { T, FONT } from "../theme";
 import { fmt, fmtDateTime, uid, generateInvoiceNumber, margin } from "../utils";
 import { Modal, Field, Input, Select, Divider, Btn } from "../components/ui";
+import { BarcodeScanner } from "../components/BarcodeScanner.jsx";
 
 /**
  * POSBillingPage — Multi-item Point of Sale billing for quick counter sales.
@@ -29,6 +30,7 @@ export function POSBillingPage({ products, activeShopId, onMultiSale, toast }) {
     const [showInvoice, setShowInvoice] = useState(false);
     const [saving, setSaving] = useState(false);
     const [invoiceNo, setInvoiceNo] = useState("");
+    const [scanOpen, setScanOpen] = useState(false);
     const searchRef = useRef(null);
 
     // Auto-focus search on mount
@@ -43,7 +45,7 @@ export function POSBillingPage({ products, activeShopId, onMultiSale, toast }) {
             .slice(0, 8);
     }, [search, shopProducts]);
 
-    // Add product to bill
+    // Add product to bill — MUST be defined before handlePosScan (TDZ guard)
     const addProduct = useCallback((p) => {
         const existing = items.find(i => i.productId === p.id);
         if (existing) {
@@ -59,6 +61,29 @@ export function POSBillingPage({ products, activeShopId, onMultiSale, toast }) {
         setSearch("");
         if (searchRef.current) searchRef.current.focus();
     }, [items]);
+
+    // ── Camera barcode scan → find product in shop inventory ─────────────────
+    // IMPORTANT: must be defined AFTER addProduct (avoids temporal dead zone)
+    const handlePosScan = useCallback((barcode) => {
+      setScanOpen(false);
+      const bc = barcode.trim().toLowerCase();
+      // Match by SKU, OEM number, or barcodes array
+      const found = shopProducts.find(p =>
+        (p.sku && p.sku.toLowerCase() === bc) ||
+        (p.oemNumber && p.oemNumber.toLowerCase() === bc) ||
+        (Array.isArray(p.barcodes) && p.barcodes.some(b => b.toLowerCase() === bc)) ||
+        (Array.isArray(p.oemNumbers) && p.oemNumbers.some(o => o.toLowerCase() === bc))
+      );
+      if (found) {
+        addProduct(found);
+        toast?.(`${found.name} added to bill`, "success");
+      } else {
+        // Show in search box so cashier can verify / pick manually
+        setSearch(barcode);
+        toast?.(`"${barcode}" not in shop inventory — searching…`, "info");
+        setTimeout(() => searchRef.current?.focus(), 100);
+      }
+    }, [shopProducts, addProduct, toast]);
 
     // Remove item
     const removeItem = (idx) => setItems(prev => prev.filter((_, i) => i !== idx));
@@ -241,14 +266,48 @@ export function POSBillingPage({ products, activeShopId, onMultiSale, toast }) {
                 </div>
             </div>
 
+            {/* Barcode Scanner Overlay */}
+            <BarcodeScanner
+              open={scanOpen}
+              onScan={handlePosScan}
+              onClose={() => setScanOpen(false)}
+              hint="Scan product barcode, EAN-13, or OEM label to add to bill"
+            />
+
             {/* Search Bar */}
-            <div style={{ position: "relative" }}>
+            <div style={{ position: "relative", display: "flex", gap: 10, alignItems: "center" }}>
+                <button
+                  onClick={() => setScanOpen(true)}
+                  title="Scan barcode with camera"
+                  style={{
+                    flexShrink: 0,
+                    background: `linear-gradient(135deg, ${T.amber}, #D97706)`,
+                    border: "none",
+                    borderRadius: 12,
+                    color: "#000",
+                    fontWeight: 800,
+                    fontSize: 13,
+                    fontFamily: FONT.ui,
+                    cursor: "pointer",
+                    padding: "0 18px",
+                    height: 52,
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 6,
+                    whiteSpace: "nowrap",
+                    boxShadow: "0 2px 12px rgba(245,158,11,0.3)",
+                  }}
+                >
+                  📷 Scan
+                </button>
+                <div style={{ position: "relative", flex: 1 }}>
                 <input
                     ref={searchRef} value={search} onChange={e => setSearch(e.target.value)}
                     placeholder="🔍 Search products by name, SKU, brand... (type to add)"
                     style={{
                         width: "100%", padding: "14px 18px", background: T.surface, border: `2px solid ${search ? T.amber : T.border}`,
                         borderRadius: 12, color: T.t1, fontSize: 15, fontFamily: FONT.ui, outline: "none", transition: "border-color 0.2s",
+                        boxSizing: "border-box",
                     }}
                 />
                 {/* Search Results Dropdown */}
@@ -273,6 +332,7 @@ export function POSBillingPage({ products, activeShopId, onMultiSale, toast }) {
                         ))}
                     </div>
                 )}
+                </div>
             </div>
 
             {/* Bill Items Table */}

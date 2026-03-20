@@ -1,12 +1,284 @@
-import { useState, useMemo } from "react";
+import React, { useState, useMemo } from "react";
 import { T, FONT } from "../theme";
 import { fmt, pct, fmtDate, fmtTime, getMovementConfig, exportMovementsCSV } from "../utils";
 import { StatCard, Input, Btn } from "../components/ui";
 
+// ── Group movements that share the same invoiceNo or batchId ─────────────────
+function groupMovements(filtered) {
+    const result = [];
+    const seen = new Map(); // groupKey → index in result
+    for (const m of filtered) {
+        const key = m.invoiceNo || m.batchId || null;
+        if (key && seen.has(key)) {
+            result[seen.get(key)].items.push(m);
+        } else {
+            const idx = result.length;
+            result.push({ key, items: [m] });
+            if (key) seen.set(key, idx);
+        }
+    }
+    return result;
+}
+
+// ── A single row for a multi-item group ──────────────────────────────────────
+function GroupRow({ group, isExpanded, onToggle, isLast }) {
+    const first = group.items[0];
+    const cfg = getMovementConfig(first.type);
+    const totalAmt = group.items.reduce((s, m) => s + (m.total || 0), 0);
+    const totalProfit = group.items.reduce((s, m) => s + (m.profit || 0), 0);
+    const totalQty = group.items.reduce((s, m) => s + Math.abs(m.qty || 0), 0);
+    const rest = group.items.length - 1;
+    const productLabel = rest > 0
+        ? `${first.productName} +${rest} more`
+        : first.productName;
+    const isSupply = first.type === "PURCHASE" || first.type === "OPENING";
+    const partyName = isSupply
+        ? (first.supplierName || first.supplier || "—")
+        : (first.customerName || "Walk-in");
+    const invoiceDisplay = first.invoiceNo || first.batchId || "—";
+
+    return (
+        <React.Fragment>
+            <tr
+                className="row-hover"
+                onClick={onToggle}
+                style={{
+                    borderBottom: isExpanded ? "none" : (isLast ? "none" : `1px solid ${T.border}`),
+                    background: isExpanded ? T.surface : T.card,
+                    cursor: "pointer",
+                    transition: "background 0.1s",
+                }}
+            >
+                {/* Date */}
+                <td style={{ padding: "12px 14px", whiteSpace: "nowrap" }}>
+                    <div style={{ fontSize: 12, color: T.t1, fontFamily: FONT.mono }}>{fmtDate(first.date)}</div>
+                    <div style={{ fontSize: 10, color: T.t3, marginTop: 2 }}>{fmtTime(first.date)}</div>
+                </td>
+                {/* Product summary */}
+                <td style={{ padding: "12px 14px", maxWidth: 180 }}>
+                    <div style={{ fontWeight: 700, color: T.t1, fontSize: 13, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                        {productLabel}
+                    </div>
+                    <div style={{ fontSize: 10, color: T.amber, marginTop: 2, fontFamily: FONT.mono }}>
+                        {group.items.length} items · {totalQty} units
+                    </div>
+                </td>
+                {/* Type badge */}
+                <td style={{ padding: "12px 14px" }}>
+                    <span style={{ background: cfg.bg, color: cfg.color, fontSize: 10, padding: "3px 9px", borderRadius: 99, fontWeight: 700, fontFamily: FONT.ui, display: "inline-flex", alignItems: "center", gap: 4 }}>
+                        <span style={{ fontSize: 12 }}>{cfg.icon}</span> {cfg.label}
+                    </span>
+                </td>
+                {/* Qty */}
+                <td style={{ padding: "12px 14px", fontFamily: FONT.mono, fontWeight: 900, fontSize: 15, color: cfg.color }}>
+                    {cfg.sym}{totalQty}
+                </td>
+                {/* Amount */}
+                <td style={{ padding: "12px 14px", fontFamily: FONT.mono, fontWeight: 600, color: T.t1 }}>
+                    {totalAmt ? fmt(totalAmt) : <span style={{ color: T.t4 }}>—</span>}
+                </td>
+                {/* Profit */}
+                <td style={{ padding: "12px 14px", fontFamily: FONT.mono, fontWeight: 700, color: totalProfit > 0 ? T.emerald : totalProfit < 0 ? T.crimson : T.t4 }}>
+                    {totalProfit ? (totalProfit > 0 ? "+" : "") + fmt(totalProfit) : <span style={{ color: T.t4 }}>—</span>}
+                </td>
+                {/* Invoice / batch */}
+                <td style={{ padding: "12px 14px", fontFamily: FONT.mono, fontSize: 11, color: T.t3 }}>
+                    {invoiceDisplay}
+                </td>
+                {/* Party */}
+                <td style={{ padding: "12px 14px", fontSize: 12, color: T.t2, maxWidth: 130 }}>
+                    <div style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{partyName}</div>
+                    {first.vehicleReg && <div style={{ fontSize: 10, color: T.amber, fontFamily: FONT.mono, marginTop: 2 }}>{first.vehicleReg}</div>}
+                </td>
+                {/* Payment */}
+                <td style={{ padding: "12px 14px" }}>
+                    {(first.payment || first.paymentMode) && (
+                        <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+                            <span style={{ fontSize: 11, color: T.t3, fontWeight: 600 }}>
+                                {(first.payment || first.paymentMode) === "Credit"
+                                    ? <span style={{ color: T.crimson }}>💳 Credit</span>
+                                    : (first.payment || first.paymentMode)}
+                            </span>
+                        </div>
+                    )}
+                </td>
+                {/* Expand indicator */}
+                <td style={{ padding: "12px 14px", fontSize: 11, color: T.amber, textAlign: "center" }}>
+                    {isExpanded ? "▲" : "▼"}
+                </td>
+            </tr>
+
+            {/* ── Expanded: mini line-item table ── */}
+            {isExpanded && (
+                <tr style={{ background: T.bg }}>
+                    <td colSpan={10} style={{ padding: 0, borderBottom: `1px solid ${T.border}` }}>
+                        <div style={{ padding: "14px 20px 18px", animation: "fadeIn 0.15s ease" }}>
+                            {/* Header */}
+                            <div style={{ fontSize: 11, color: T.t3, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.07em", marginBottom: 10, display: "flex", gap: 8, alignItems: "center" }}>
+                                <span style={{ color: T.amber }}>{group.items.length} Line Items</span>
+                                {first.invoiceNo && <span style={{ color: T.sky, fontFamily: FONT.mono }}>· {first.invoiceNo}</span>}
+                                {!first.invoiceNo && first.batchId && <span style={{ color: T.t4, fontFamily: FONT.mono }}>· Batch {first.batchId}</span>}
+                            </div>
+                            {/* Line items table */}
+                            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+                                <thead>
+                                    <tr style={{ borderBottom: `1px solid ${T.border}` }}>
+                                        {["Product", "Qty", "Unit Price", "Amount", "Profit", "Note"].map(h => (
+                                            <th key={h} style={{ padding: "6px 10px", textAlign: "left", color: T.t4, fontWeight: 600, fontSize: 10, textTransform: "uppercase", letterSpacing: "0.06em", fontFamily: FONT.ui }}>{h}</th>
+                                        ))}
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {group.items.map((m, i) => {
+                                        const mc = getMovementConfig(m.type);
+                                        return (
+                                            <tr key={m.id} style={{ borderBottom: i < group.items.length - 1 ? `1px solid ${T.border}` : "none" }}>
+                                                <td style={{ padding: "8px 10px", color: T.t1, fontWeight: 600 }}>{m.productName || "—"}</td>
+                                                <td style={{ padding: "8px 10px", fontFamily: FONT.mono, color: mc.color, fontWeight: 700 }}>{mc.sym}{Math.abs(m.qty)}</td>
+                                                <td style={{ padding: "8px 10px", fontFamily: FONT.mono, color: T.t2 }}>{m.unitPrice ? fmt(m.unitPrice) : "—"}</td>
+                                                <td style={{ padding: "8px 10px", fontFamily: FONT.mono, color: T.amber, fontWeight: 700 }}>{m.total ? fmt(m.total) : "—"}</td>
+                                                <td style={{ padding: "8px 10px", fontFamily: FONT.mono, fontWeight: 700, color: (m.profit || 0) > 0 ? T.emerald : (m.profit || 0) < 0 ? T.crimson : T.t4 }}>
+                                                    {m.profit ? (m.profit > 0 ? "+" : "") + fmt(m.profit) : "—"}
+                                                </td>
+                                                <td style={{ padding: "8px 10px", color: T.t3, fontSize: 11 }}>{m.note || "—"}</td>
+                                            </tr>
+                                        );
+                                    })}
+                                </tbody>
+                                {/* Totals footer */}
+                                <tfoot>
+                                    <tr style={{ borderTop: `1px solid ${T.border}`, background: T.surface }}>
+                                        <td style={{ padding: "8px 10px", color: T.t3, fontWeight: 700, fontSize: 11 }}>TOTAL</td>
+                                        <td style={{ padding: "8px 10px", fontFamily: FONT.mono, fontWeight: 700, color: cfg.color }}>{totalQty} units</td>
+                                        <td />
+                                        <td style={{ padding: "8px 10px", fontFamily: FONT.mono, fontWeight: 700, color: T.amber }}>{fmt(totalAmt)}</td>
+                                        <td style={{ padding: "8px 10px", fontFamily: FONT.mono, fontWeight: 700, color: totalProfit > 0 ? T.emerald : totalProfit < 0 ? T.crimson : T.t4 }}>
+                                            {totalProfit ? (totalProfit > 0 ? "+" : "") + fmt(totalProfit) : "—"}
+                                        </td>
+                                        <td />
+                                    </tr>
+                                </tfoot>
+                            </table>
+                        </div>
+                    </td>
+                </tr>
+            )}
+        </React.Fragment>
+    );
+}
+
+// ── A single standalone row (unchanged from original) ────────────────────────
+function SingleRow({ m, isExpanded, onToggle, isLast }) {
+    const cfg = getMovementConfig(m.type);
+    return (
+        <React.Fragment>
+            <tr className="row-hover" onClick={onToggle} style={{
+                borderBottom: isExpanded ? "none" : (isLast ? "none" : `1px solid ${T.border}`),
+                background: isExpanded ? T.surface : T.card,
+                cursor: "pointer",
+                transition: "background 0.1s",
+            }}>
+                <td style={{ padding: "12px 14px", whiteSpace: "nowrap" }}>
+                    <div style={{ fontSize: 12, color: T.t1, fontFamily: FONT.mono }}>{fmtDate(m.date)}</div>
+                    <div style={{ fontSize: 10, color: T.t3, marginTop: 2 }}>{fmtTime(m.date)}</div>
+                </td>
+                <td style={{ padding: "12px 14px", maxWidth: 160 }}>
+                    <div style={{ fontWeight: 700, color: T.t1, fontSize: 13, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{m.productName}</div>
+                </td>
+                <td style={{ padding: "12px 14px" }}>
+                    <span style={{ background: cfg.bg, color: cfg.color, fontSize: 10, padding: "3px 9px", borderRadius: 99, fontWeight: 700, fontFamily: FONT.ui, display: "inline-flex", alignItems: "center", gap: 4 }}>
+                        <span style={{ fontSize: 12 }}>{cfg.icon}</span> {cfg.label}
+                    </span>
+                </td>
+                <td style={{ padding: "12px 14px", fontFamily: FONT.mono, fontWeight: 900, fontSize: 15, color: cfg.color }}>
+                    {cfg.sym}{Math.abs(m.qty)}
+                </td>
+                <td style={{ padding: "12px 14px", fontFamily: FONT.mono, fontWeight: 600, color: T.t1 }}>{m.total ? fmt(m.total) : <span style={{ color: T.t4 }}>—</span>}</td>
+                <td style={{ padding: "12px 14px", fontFamily: FONT.mono, fontWeight: 700, color: m.profit > 0 ? T.emerald : m.profit < 0 ? T.crimson : T.t4 }}>
+                    {m.profit ? (m.profit > 0 ? "+" : "") + fmt(m.profit) : <span style={{ color: T.t4 }}>—</span>}
+                </td>
+                <td style={{ padding: "12px 14px", fontFamily: FONT.mono, fontSize: 11, color: T.t3 }}>{m.invoiceNo || <span style={{ color: T.t4 }}>—</span>}</td>
+                <td style={{ padding: "12px 14px", fontSize: 12, color: T.t2, maxWidth: 130 }}>
+                    <div style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                        {(m.type === "PURCHASE" || m.type === "OPENING")
+                          ? (m.supplierName || m.supplier || "—")
+                          : (m.customerName || "Walk-in")}
+                    </div>
+                    {m.vehicleReg && <div style={{ fontSize: 10, color: T.amber, fontFamily: FONT.mono, marginTop: 2 }}>{m.vehicleReg}</div>}
+                </td>
+                <td style={{ padding: "12px 14px" }}>
+                    {(m.payment || m.paymentMode) && (
+                        <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+                            <span style={{ fontSize: 11, color: T.t3, fontWeight: 600 }}>
+                                {(m.payment || m.paymentMode) === "Credit" ? <span style={{ color: T.crimson }}>💳 Credit</span> : (m.payment || m.paymentMode)}
+                            </span>
+                            {m.paymentStatus && (
+                                <span style={{ fontSize: 9, fontWeight: 700, color: m.paymentStatus === "paid" || m.paymentStatus === "completed" ? T.emerald : T.crimson, textTransform: "uppercase" }}>
+                                    {m.paymentStatus}
+                                </span>
+                            )}
+                        </div>
+                    )}
+                </td>
+                <td style={{ padding: "12px 14px", fontSize: 11, color: T.t3, maxWidth: 140 }}>
+                    <span style={{ display: "block", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{m.note || "—"}</span>
+                </td>
+            </tr>
+            {/* ── Expanded detail ── */}
+            {isExpanded && (
+                <tr style={{ background: T.bg }}>
+                    <td colSpan={10} style={{ padding: 0, borderBottom: `1px solid ${T.border}` }}>
+                        <div style={{ padding: "16px 20px 18px", display: "flex", flexDirection: "column", gap: 12, animation: "fadeIn 0.15s ease" }}>
+                            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(180px, 1fr))", gap: 8 }}>
+                                {[
+                                    { label: "Product", value: m.productName, color: T.t1 },
+                                    { label: "Type", value: cfg.label, color: cfg.color },
+                                    { label: "Qty", value: `${cfg.sym}${Math.abs(m.qty)} unit${Math.abs(m.qty) !== 1 ? "s" : ""}`, color: cfg.color },
+                                    { label: "Amount", value: m.total ? fmt(m.total) : "—", color: T.amber },
+                                    { label: "Unit Price", value: m.unitPrice ? fmt(m.unitPrice) : "—", color: T.t2 },
+                                    { label: "Profit", value: m.profit ? (m.profit > 0 ? "+" : "") + fmt(m.profit) : "—", color: m.profit > 0 ? T.emerald : m.profit < 0 ? T.crimson : T.t4 },
+                                    { label: m.type === "PURCHASE" || m.type === "OPENING" ? "Supplier" : "Customer", value: (m.type === "PURCHASE" || m.type === "OPENING" ? (m.supplierName || m.supplier) : m.customerName) || "—", color: T.t2 },
+                                    { label: "Payment", value: m.payment || m.paymentMode || "—", color: T.t2 },
+                                    { label: "Invoice #", value: m.invoiceNo || "—", color: T.sky },
+                                    { label: "Payment Status", value: m.paymentStatus || "—", color: m.paymentStatus === "paid" || m.paymentStatus === "completed" ? T.emerald : T.crimson },
+                                    { label: "Customer Phone", value: m.customerPhone || "—", color: T.t3 },
+                                    { label: "Vehicle Reg", value: m.vehicleReg || "—", color: T.amber },
+                                ].map(({ label, value, color }) => value && value !== "—" ? (
+                                    <div key={label} style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: 8, padding: "8px 12px" }}>
+                                        <div style={{ fontSize: 9, color: T.t4, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 3 }}>{label}</div>
+                                        <div style={{ fontSize: 13, fontWeight: 700, color, fontFamily: label === "Amount" || label === "Unit Price" || label === "Profit" || label === "Qty" ? FONT.mono : FONT.ui }}>{value}</div>
+                                    </div>
+                                ) : null)}
+                            </div>
+                            {m.note && (
+                                <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: 8, padding: "10px 14px" }}>
+                                    <div style={{ fontSize: 9, color: T.t4, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 4 }}>Notes / Details</div>
+                                    <div style={{ fontSize: 12, color: T.t2, lineHeight: 1.6 }}>{m.note}</div>
+                                </div>
+                            )}
+                            {m.adjustmentMeta && (
+                                <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: 8, padding: "10px 14px" }}>
+                                    <div style={{ fontSize: 9, color: T.t4, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 6 }}>Adjustment Details</div>
+                                    <div style={{ display: "flex", gap: 20, fontSize: 12, color: T.t2, flexWrap: "wrap" }}>
+                                        <span>Type: <strong style={{ color: T.t1 }}>{m.adjustmentMeta.type}</strong></span>
+                                        <span>Stock: <strong style={{ color: T.amber, fontFamily: FONT.mono }}>{m.adjustmentMeta.previousStock} → {m.adjustmentMeta.newStock}</strong></span>
+                                        {m.adjustmentMeta.reason && <span>Reason: <strong style={{ color: T.t1 }}>{m.adjustmentMeta.reason}</strong></span>}
+                                        {m.adjustmentMeta.refundMethod && <span>Refund via: <strong style={{ color: T.emerald }}>{m.adjustmentMeta.refundMethod}</strong></span>}
+                                    </div>
+                                </div>
+                            )}
+                        </div>
+                    </td>
+                </tr>
+            )}
+        </React.Fragment>
+    );
+}
+
 export function HistoryPage({ movements, activeShopId }) {
     const [filter, setFilter] = useState("ALL");
     const [search, setSearch] = useState("");
-    const [expandedId, setExpandedId] = useState(null);
+    const [expandedKey, setExpandedKey] = useState(null);
     const [dateFrom, setDateFrom] = useState("");
     const [dateTo, setDateTo] = useState("");
 
@@ -14,18 +286,21 @@ export function HistoryPage({ movements, activeShopId }) {
 
     const sorted = useMemo(() => [...shopMovements].sort((a, b) => b.date - a.date), [shopMovements]);
 
-    const filtered = sorted
+    const filtered = useMemo(() => sorted
         .filter(m => {
             if (filter === "ALL") return true;
             if (filter === "ADJUSTMENTS") return ["RETURN_IN", "RETURN_OUT", "CREDIT_NOTE", "DEBIT_NOTE", "DAMAGE", "THEFT", "AUDIT", "OPENING", "TRANSFER_IN", "TRANSFER_OUT", "ADJUST"].includes(m.type);
             return m.type === filter;
         })
-        .filter(m => !search || [m.productName, m.invoiceNo, m.supplier, m.supplierName, m.customerName, m.note].some(s => (s || "").toLowerCase().includes(search.toLowerCase())))
+        .filter(m => !search || [m.productName, m.invoiceNo, m.batchId, m.supplier, m.supplierName, m.customerName, m.note].some(s => (s || "").toLowerCase().includes(search.toLowerCase())))
         .filter(m => {
             if (dateFrom) { const from = new Date(dateFrom).getTime(); if (m.date < from) return false; }
             if (dateTo) { const to = new Date(dateTo).setHours(23, 59, 59, 999); if (m.date > to) return false; }
             return true;
-        });
+        }), [sorted, filter, search, dateFrom, dateTo]);
+
+    // Group by invoiceNo or batchId so multi-item bills collapse into one row
+    const groups = useMemo(() => groupMovements(filtered), [filtered]);
 
     const totals = useMemo(() => ({
         purchases: shopMovements.filter(m => m.type === "PURCHASE").reduce((s, m) => s + m.total, 0),
@@ -85,82 +360,31 @@ export function HistoryPage({ movements, activeShopId }) {
             </div>
 
             <div style={{ fontSize: 12, color: T.t3 }}>
-                Showing <span style={{ color: T.t1, fontWeight: 700 }}>{filtered.length}</span> of {shopMovements.length} entries
+                Showing <span style={{ color: T.t1, fontWeight: 700 }}>{groups.length}</span> {groups.length !== filtered.length && <span>(grouped from <span style={{ color: T.t1, fontWeight: 700 }}>{filtered.length}</span> entries)</span>} of {shopMovements.length} total entries
             </div>
 
             <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: 14, overflow: "hidden" }}>
                 <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
                     <thead>
                         <tr style={{ background: T.surface, borderBottom: `1px solid ${T.border}` }}>
-                            {["Date & Time", "Product", "Type", "Qty", "Amount", "Profit", "Invoice", "Party", "Payment", "Details"].map(h => (
+                            {["Date & Time", "Product / Items", "Type", "Qty", "Amount", "Profit", "Invoice", "Party", "Payment", "Details"].map(h => (
                                 <th key={h} style={{ padding: "10px 14px", textAlign: "left", color: T.t3, fontWeight: 600, fontSize: 10, textTransform: "uppercase", letterSpacing: "0.07em", fontFamily: FONT.ui, whiteSpace: "nowrap" }}>{h}</th>
                             ))}
                         </tr>
                     </thead>
                     <tbody>
-                        {filtered.length === 0 ? (
+                        {groups.length === 0 ? (
                             <tr><td colSpan={10} style={{ padding: "40px", textAlign: "center", color: T.t3, fontFamily: FONT.ui }}>No records found.</td></tr>
-                        ) : filtered.map((m, i) => {
-                            const cfg = getMovementConfig(m.type);
-                            const isExpanded = expandedId === m.id;
-                            return (
-                                <tr key={m.id} className="row-hover" onClick={() => setExpandedId(isExpanded ? null : m.id)} style={{
-                                    borderBottom: i < filtered.length - 1 ? `1px solid ${T.border}` : "none", background: isExpanded ? T.surface : T.card, cursor: "pointer", transition: "background 0.1s"
-                                }}>
-                                    <td style={{ padding: "12px 14px", whiteSpace: "nowrap" }}>
-                                        <div style={{ fontSize: 12, color: T.t1, fontFamily: FONT.mono }}>{fmtDate(m.date)}</div>
-                                        <div style={{ fontSize: 10, color: T.t3, marginTop: 2 }}>{fmtTime(m.date)}</div>
-                                    </td>
-                                    <td style={{ padding: "12px 14px", maxWidth: 160 }}>
-                                        <div style={{ fontWeight: 700, color: T.t1, fontSize: 13, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{m.productName}</div>
-                                    </td>
-                                    <td style={{ padding: "12px 14px" }}>
-                                        <span style={{ background: cfg.bg, color: cfg.color, fontSize: 10, padding: "3px 9px", borderRadius: 99, fontWeight: 700, fontFamily: FONT.ui, display: "inline-flex", alignItems: "center", gap: 4 }}>
-                                            <span style={{ fontSize: 12 }}>{cfg.icon}</span> {cfg.label}
-                                        </span>
-                                    </td>
-                                    <td style={{ padding: "12px 14px", fontFamily: FONT.mono, fontWeight: 900, fontSize: 15, color: cfg.color }}>
-                                        {cfg.sym}{Math.abs(m.qty)}
-                                    </td>
-                                    <td style={{ padding: "12px 14px", fontFamily: FONT.mono, fontWeight: 600, color: T.t1 }}>{m.total ? fmt(m.total) : <span style={{ color: T.t4 }}>—</span>}</td>
-                                    <td style={{ padding: "12px 14px", fontFamily: FONT.mono, fontWeight: 700, color: m.profit > 0 ? T.emerald : m.profit < 0 ? T.crimson : T.t4 }}>
-                                        {m.profit ? (m.profit > 0 ? "+" : "") + fmt(m.profit) : <span style={{ color: T.t4 }}>—</span>}
-                                    </td>
-                                    <td style={{ padding: "12px 14px", fontFamily: FONT.mono, fontSize: 11, color: T.t3 }}>{m.invoiceNo || <span style={{ color: T.t4 }}>—</span>}</td>
-                                    <td style={{ padding: "12px 14px", fontSize: 12, color: T.t2, maxWidth: 130 }}>
-                                        <div style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                                            {m.type === "PURCHASE" ? (m.supplierName || m.supplier) : m.customerName || "Walk-in"}
-                                        </div>
-                                        {m.vehicleReg && <div style={{ fontSize: 10, color: T.amber, fontFamily: FONT.mono, marginTop: 2 }}>{m.vehicleReg}</div>}
-                                    </td>
-                                    <td style={{ padding: "12px 14px" }}>
-                                        {(m.payment || m.paymentMode) && (
-                                            <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
-                                                <span style={{ fontSize: 11, color: T.t3, fontWeight: 600 }}>
-                                                    {(m.payment || m.paymentMode) === "Credit" ? <span style={{ color: T.crimson }}>💳 Credit</span> : (m.payment || m.paymentMode)}
-                                                </span>
-                                                {m.paymentStatus && (
-                                                    <span style={{ fontSize: 9, fontWeight: 700, color: m.paymentStatus === "paid" || m.paymentStatus === "completed" ? T.emerald : T.crimson, textTransform: "uppercase" }}>
-                                                        {m.paymentStatus}
-                                                    </span>
-                                                )}
-                                            </div>
-                                        )}
-                                    </td>
-                                    <td style={{ padding: "12px 14px", fontSize: 11, color: T.t3, maxWidth: 140 }}>
-                                        <span style={{ display: "block", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{m.note || "—"}</span>
-                                        {/* Expanded Details */}
-                                        {isExpanded && m.adjustmentMeta && (
-                                            <div style={{ marginTop: 8, padding: "8px 10px", background: T.bg, borderRadius: 6, fontSize: 11, color: T.t2, lineHeight: 1.6 }}>
-                                                <div>Type: <span style={{ color: T.t1, fontWeight: 600 }}>{m.adjustmentMeta.type}</span></div>
-                                                <div>Stock: {m.adjustmentMeta.previousStock} → {m.adjustmentMeta.newStock}</div>
-                                                {m.adjustmentMeta.reason && <div>Reason: {m.adjustmentMeta.reason}</div>}
-                                                {m.adjustmentMeta.refundMethod && <div>Refund: {m.adjustmentMeta.refundMethod}</div>}
-                                            </div>
-                                        )}
-                                    </td>
-                                </tr>
-                            );
+                        ) : groups.map((group, i) => {
+                            const rowKey = group.key || group.items[0].id;
+                            const isExpanded = expandedKey === rowKey;
+                            const toggle = () => setExpandedKey(isExpanded ? null : rowKey);
+                            const isLast = i === groups.length - 1;
+
+                            if (group.items.length > 1) {
+                                return <GroupRow key={rowKey} group={group} isExpanded={isExpanded} onToggle={toggle} isLast={isLast} />;
+                            }
+                            return <SingleRow key={rowKey} m={group.items[0]} isExpanded={isExpanded} onToggle={toggle} isLast={isLast} />;
                         })}
                     </tbody>
                 </table>

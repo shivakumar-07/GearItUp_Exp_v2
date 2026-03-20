@@ -6,30 +6,25 @@ import { createSession, ensureAuthProvider } from './helpers.js';
 
 const router = Router();
 
-// ─── In-memory OTP failure tracking (resets on server restart) ──────────────
-const otpFailures = new Map();
 const OTP_MAX_FAILURES = 5;
 const OTP_LOCK_MS = 15 * 60 * 1000; // 15 minutes
 
-function recordOtpFailure(phone) {
-  const rec = otpFailures.get(phone) || { count: 0, lockedUntil: null };
-  rec.count += 1;
-  if (rec.count >= OTP_MAX_FAILURES) {
-    rec.lockedUntil = new Date(Date.now() + OTP_LOCK_MS);
-  }
-  otpFailures.set(phone, rec);
-}
-
-function isOtpLocked(phone) {
-  const rec = otpFailures.get(phone);
-  if (!rec?.lockedUntil) return false;
-  if (rec.lockedUntil > new Date()) return true;
-  otpFailures.delete(phone);
-  return false;
-}
-
-function clearOtpFailures(phone) {
-  otpFailures.delete(phone);
+/**
+ * Check if a phone is currently locked due to too many OTP failures.
+ * Uses DB so failure counts survive server restarts (unlike the previous Map).
+ */
+async function isOtpLocked(phone) {
+  // Count recent failed (used=false, not expired) OTP codes with high attempt counts
+  const recentLocked = await prisma.otpCode.findFirst({
+    where: {
+      phone,
+      used: false,
+      attempts: { gte: OTP_MAX_FAILURES },
+      expiresAt: { gt: new Date() },
+    },
+    orderBy: { createdAt: 'desc' },
+  });
+  return !!recentLocked;
 }
 
 // POST /api/auth/request-otp
@@ -43,7 +38,7 @@ router.post('/request-otp', otpSendLimiter, async (req, res, next) => {
       });
     }
 
-    if (isOtpLocked(phone)) {
+    if (await isOtpLocked(phone)) {
       return res.status(429).json({
         success: false,
         error: { code: 'OTP_LOCKED', message: 'Too many failed attempts. Please wait 15 minutes before trying again.' },
@@ -74,18 +69,32 @@ router.post('/verify-otp', async (req, res, next) => {
       });
     }
 
-    if (isOtpLocked(phone)) {
+    if (await isOtpLocked(phone)) {
       return res.status(429).json({
         success: false,
         error: { code: 'OTP_LOCKED', message: 'Too many failed attempts. Please wait 15 minutes.' },
       });
     }
 
-    const { valid } = await verifyOtp(phone, otp);
+    const ipAddress = req.ip || req.connection?.remoteAddress || null;
+    const { valid, otpRecord } = await verifyOtp(phone, otp);
+
     if (!valid) {
-      recordOtpFailure(phone);
-      const rec = otpFailures.get(phone);
-      const remaining = OTP_MAX_FAILURES - (rec?.count || 0);
+      // Increment the failure counter on the latest OTP record for this phone
+      if (otpRecord?.id) {
+        await prisma.otpCode.update({
+          where: { id: otpRecord.id },
+          data: { attempts: { increment: 1 } },
+        }).catch(() => {});
+      }
+
+      // Count remaining attempts
+      const latest = await prisma.otpCode.findFirst({
+        where: { phone, used: false, expiresAt: { gt: new Date() } },
+        orderBy: { createdAt: 'desc' },
+      });
+      const remaining = Math.max(0, OTP_MAX_FAILURES - (latest?.attempts || 0));
+
       return res.status(400).json({
         success: false,
         error: {
@@ -97,7 +106,13 @@ router.post('/verify-otp', async (req, res, next) => {
       });
     }
 
-    clearOtpFailures(phone);
+    // Mark OTP as verified
+    if (otpRecord?.id) {
+      await prisma.otpCode.update({
+        where: { id: otpRecord.id },
+        data: { used: true, verifiedAt: new Date() },
+      }).catch(() => {});
+    }
 
     // Upsert user by phone
     let isNewUser = false;
@@ -105,22 +120,21 @@ router.post('/verify-otp', async (req, res, next) => {
     if (!user) {
       const initialRole = role === 'shop' ? 'SHOP_OWNER' : 'CUSTOMER';
       user = await prisma.user.create({
-        data: { phone, role: initialRole, phoneVerified: true },
+        data: { phone, role: initialRole, phoneVerified: true, isVerified: true },
         include: { shop: true },
       });
       isNewUser = true;
     } else if (!user.phoneVerified) {
       user = await prisma.user.update({
         where: { userId: user.userId },
-        data: { phoneVerified: true },
+        data: { phoneVerified: true, isVerified: true },
         include: { shop: true },
       });
     }
 
-    // Ensure PHONE provider is linked
     await ensureAuthProvider(user.userId, 'PHONE', phone);
 
-    const payload = await createSession(res, user, { isNewUser });
+    const payload = await createSession(res, user, { isNewUser, req });
     res.json(payload);
   } catch (err) {
     next(err);

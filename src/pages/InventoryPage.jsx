@@ -201,7 +201,15 @@ export function InventoryPage({ products, movements, activeShopId, onAdd, onEdit
                             return (
                                 <>
                                     <tr key={p.id} className="row-hover" onClick={() => setExpandedId(expandedId === p.id ? null : p.id)} style={{ borderBottom: expandedId === p.id ? "none" : `1px solid ${T.border}`, background: expandedId === p.id ? T.surface : T.card, cursor: "pointer", transition: "background 0.15s" }}>
-                                        <td style={{ padding: "10px 10px 10px 14px", fontSize: 22 }}>{p.image}</td>
+                                        <td style={{ padding: "10px 10px 10px 14px", width: 44 }}>
+                                            {p.image && p.image.startsWith("http") ? (
+                                                <img src={p.image} alt="" style={{ width: 34, height: 34, borderRadius: 7, objectFit: "cover", display: "block" }}
+                                                    onError={(e) => { e.target.style.display = "none"; e.target.nextSibling.style.display = "block"; }} />
+                                            ) : null}
+                                            <span style={{ fontSize: 22, display: (p.image && p.image.startsWith("http")) ? "none" : "block" }}>
+                                                {p.image || p.imageEmoji || "📦"}
+                                            </span>
+                                        </td>
                                         <td style={{ padding: "10px 12px", maxWidth: 220 }}>
                                             <div style={{ fontWeight: 700, color: T.t1, fontSize: 13, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{p.name}</div>
                                             <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 2 }}>
@@ -246,7 +254,10 @@ export function InventoryPage({ products, movements, activeShopId, onAdd, onEdit
                                                 <div style={{ padding: "16px 24px 20px", animation: "fadeIn 0.2s ease" }}>
                                                     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
                                                         <div style={{ fontSize: 14, fontWeight: 800, color: T.t1, display: "flex", gap: 8, alignItems: "center" }}>
-                                                            <span style={{ fontSize: 18 }}>{p.image}</span> {p.name}
+                                                            {p.image && p.image.startsWith("http")
+                                                                ? <img src={p.image} alt="" style={{ width: 22, height: 22, borderRadius: 4, objectFit: "cover", verticalAlign: "middle" }} />
+                                                                : <span style={{ fontSize: 18 }}>{p.image || p.imageEmoji || "📦"}</span>
+                                                            } {p.name}
                                                             <span style={{ fontSize: 10, color: T.t4, fontWeight: 500 }}>— Automobile Details</span>
                                                         </div>
                                                         <button onClick={(e) => { e.stopPropagation(); setExpandedId(null); }} style={{ background: "transparent", border: `1px solid ${T.border}`, borderRadius: 6, padding: "3px 10px", color: T.t3, fontSize: 11, cursor: "pointer", fontFamily: FONT.ui }}>✕ Close</button>

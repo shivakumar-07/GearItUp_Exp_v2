@@ -36,15 +36,43 @@ router.get('/', authenticate, requireShopOwner, async (req, res, next) => {
       _count: true,
     });
 
-    // Low stock items
-    const lowStockItems = await prisma.shopInventory.findMany({
-      where: {
-        shopId,
-        stockQty: { lte: prisma.shopInventory.fields.minStockAlert },
+    // Low stock items — cross-column comparison requires raw SQL
+    // Prisma does not support WHERE column_a <= column_b in its query builder
+    const lowStockRows = await prisma.$queryRaw`
+      SELECT si.inventory_id, si.shop_id, si.master_part_id,
+             si.selling_price, si.buying_price, si.stock_qty,
+             si.min_stock_alert, si.rack_location, si.is_marketplace_listed,
+             mp.part_name, mp.brand, mp.category_l1, mp.hsn_code, mp.gst_rate,
+             mp.oem_number, mp.unit_of_sale, mp.image_url
+      FROM   shop_inventory si
+      JOIN   master_parts mp ON mp.master_part_id = si.master_part_id
+      WHERE  si.shop_id = ${shopId}
+        AND  si.stock_qty <= si.min_stock_alert
+      ORDER  BY si.stock_qty ASC
+      LIMIT  10
+    `;
+    const lowStockItems = lowStockRows.map(r => ({
+      inventoryId: r.inventory_id,
+      shopId: r.shop_id,
+      masterPartId: r.master_part_id,
+      sellingPrice: r.selling_price,
+      buyingPrice: r.buying_price,
+      stockQty: r.stock_qty,
+      minStockAlert: r.min_stock_alert,
+      rackLocation: r.rack_location,
+      isMarketplaceListed: r.is_marketplace_listed,
+      masterPart: {
+        masterPartId: r.master_part_id,
+        partName: r.part_name,
+        brand: r.brand,
+        categoryL1: r.category_l1,
+        hsnCode: r.hsn_code,
+        gstRate: r.gst_rate,
+        oemNumber: r.oem_number,
+        unitOfSale: r.unit_of_sale,
+        imageUrl: r.image_url,
       },
-      include: { masterPart: true },
-      take: 10,
-    });
+    }));
 
     // Top selling products
     const topProducts = await prisma.movement.groupBy({

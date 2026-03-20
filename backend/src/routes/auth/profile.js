@@ -7,27 +7,69 @@ import { findUserByEmailInsensitive, formatUserResponse, normalizeEmail } from '
 
 const router = Router();
 
-// GET /api/auth/me — get full profile with settings and providers
-router.get('/me', authenticate, async (req, res) => {
-  const user = await prisma.user.findUnique({
-    where: { userId: req.user.userId },
-    include: {
-      shop: true,
-      profile: true,
-      settings: true,
-      providers: { select: { provider: true, providerId: true, linkedAt: true } },
-    },
-  });
+// GET /api/auth/me — get full profile with settings, providers, and role-specific data
+router.get('/me', authenticate, async (req, res, next) => {
+  try {
+    const user = await prisma.user.findUnique({
+      where: { userId: req.user.userId },
+      include: {
+        shop: true,
+        profile: true,
+        settings: true,
+        providers: { select: { provider: true, providerId: true, linkedAt: true } },
+      },
+    });
 
-  res.json({
-    success: true,
-    data: {
+    const base = {
       ...formatUserResponse(user),
       profile: user.profile,
       settings: user.settings,
       providers: user.providers,
-    },
-  });
+    };
+
+    // ── Role-specific enrichment ──────────────────────────────────────────────
+    if (user.role === 'CUSTOMER') {
+      // Ensure CustomerProfile exists (created on first login)
+      const customerProfile = await prisma.customerProfile.upsert({
+        where: { userId: user.userId },
+        update: {},
+        create: { userId: user.userId },
+      });
+      const addresses = await prisma.customerAddress.findMany({
+        where: { userId: user.userId },
+        orderBy: [{ isDefault: 'desc' }, { createdAt: 'asc' }],
+      });
+      const garageVehicles = await prisma.customerVehicleGarage.findMany({
+        where: { userId: user.userId },
+        orderBy: [{ isDefault: 'desc' }, { createdAt: 'asc' }],
+      });
+      base.customerProfile = customerProfile;
+      base.addresses = addresses;
+      base.garageVehicles = garageVehicles;
+    }
+
+    if (user.role === 'SHOP_OWNER' && user.shopId) {
+      const shopStaff = await prisma.shopUser.findMany({
+        where: { shopId: user.shopId },
+        include: {
+          user: { select: { userId: true, name: true, phone: true, email: true, avatarUrl: true, lastLoginAt: true } },
+        },
+        orderBy: [{ isActive: 'desc' }, { joinedAt: 'asc' }],
+      });
+      base.shopStaff = shopStaff;
+    }
+
+    if (user.role === 'PLATFORM_ADMIN') {
+      const adminProfile = await prisma.adminProfile.findUnique({
+        where: { userId: user.userId },
+      });
+      base.adminProfile = adminProfile;
+    }
+
+    res.json({ success: true, data: base });
+  } catch (err) {
+    next(err);
+  }
 });
 
 // PATCH /api/auth/me — update basic user info

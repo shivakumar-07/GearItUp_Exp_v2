@@ -38,22 +38,15 @@ export const sendOtp = async (phone) => {
 };
 
 export const verifyOtp = async (phone, code) => {
-  const otpRecord = await prisma.otpCode.findFirst({
-    where: {
-      phone,
-      code,
-      used: false,
-      expiresAt: { gt: new Date() },
-    },
+  // Find the latest active OTP for this phone (used to return on failure for attempt tracking)
+  const latest = await prisma.otpCode.findFirst({
+    where: { phone, used: false, expiresAt: { gt: new Date() } },
     orderBy: { createdAt: 'desc' },
   });
 
-  if (!otpRecord) return { valid: false };
+  if (!latest || latest.code !== code) return { valid: false, otpRecord: latest };
 
-  await prisma.otpCode.update({
-    where: { id: otpRecord.id },
-    data: { used: true },
-  });
-
-  return { valid: true };
+  // Don't mark as used here — the route does it after ensureAuthProvider so we keep the record
+  // for the `if (otpRecord?.id)` block in the route
+  return { valid: true, otpRecord: latest };
 };

@@ -4,29 +4,39 @@ import { api } from './client.js';
 
 // Map backend ShopInventory + MasterPart → frontend product shape
 export function mapInventoryToProduct(inv) {
+  const mp = inv.masterPart;
+  // Resolve the best displayable image: catalog image URL → category emoji fallback
+  const imageVal = mp?.imageUrl || (mp?.images && mp.images[0]) || getCategoryEmoji(mp?.categoryL1);
   return {
     id: inv.inventoryId,
     inventoryId: inv.inventoryId,
     masterPartId: inv.masterPartId,
     globalSku: inv.masterPartId,
-    name: inv.masterPart?.partName || inv.partName || 'Unknown Part',
-    oemNumber: inv.masterPart?.oemNumber || '',
-    brand: inv.masterPart?.brand || '',
-    category: inv.masterPart?.categoryL1 || 'General',
-    categoryL2: inv.masterPart?.categoryL2 || '',
-    hsnCode: inv.masterPart?.hsnCode || '',
-    gstRate: parseFloat(inv.masterPart?.gstRate || 18),
-    unitOfSale: inv.masterPart?.unitOfSale || 'Piece',
+    name: mp?.partName || inv.partName || 'Unknown Part',
+    oemNumber: mp?.oemNumber || (mp?.oemNumbers && mp.oemNumbers[0]) || '',
+    oemNumbers: mp?.oemNumbers || [],
+    barcodes: mp?.barcodes || [],
+    brand: mp?.brand || '',
+    category: mp?.categoryL1 || 'General',
+    categoryL2: mp?.categoryL2 || '',
+    hsnCode: mp?.hsnCode || '',
+    gstRate: parseFloat(mp?.gstRate || 18),
+    unitOfSale: mp?.unitOfSale || 'Piece',
+    description: mp?.description || '',
+    specifications: mp?.specifications || {},
     sellPrice: parseFloat(inv.sellingPrice || 0),
     buyPrice: parseFloat(inv.buyingPrice || 0),
     stock: inv.computedStock ?? inv.stockQty ?? 0,
     minStock: inv.minStockAlert || 5,
     rack: inv.rackLocation || '',
+    location: inv.rackLocation || '',   // UI uses p.location throughout
     isMarketplaceListed: inv.isMarketplaceListed || false,
     shopId: inv.shopId,
-    // Keep these for UI compatibility
-    sku: inv.masterPart?.oemNumber || inv.inventoryId?.slice(0, 8) || '',
-    imageEmoji: getCategoryEmoji(inv.masterPart?.categoryL1),
+    // Image — display either URL (<img>) or emoji text
+    image: imageVal,
+    imageEmoji: getCategoryEmoji(mp?.categoryL1),
+    // SKU for barcode / POS search
+    sku: mp?.oemNumber || (mp?.oemNumbers && mp.oemNumbers[0]) || inv.inventoryId?.slice(0, 8) || '',
   };
 }
 
@@ -140,4 +150,77 @@ export async function syncPartySave(party) {
   } catch (err) {
     console.warn('[Sync] Party save to API failed (not critical):', err.message);
   }
+}
+
+// ─── Push functions — local-first: UI updates immediately, backend syncs async ─
+
+/**
+ * Sync a sale/invoice to the backend.
+ * Called fire-and-forget from handleSale / handleMultiItemSale in App.jsx.
+ * Only fires if all inventoryIds are real DB UUIDs (not seed data like "p1").
+ */
+export async function syncInvoice({ items, partyId, partyName, partyPhone, paymentMode, cashAmount, upiAmount, creditAmount, notes }) {
+  // Guard: only call API if we have real DB inventory IDs
+  const hasRealIds = items?.every(item => isDbUuid(item.inventoryId));
+  if (!hasRealIds) return;
+  try {
+    await api.post('/api/billing/invoice', {
+      items: items.map(item => ({
+        inventoryId: item.inventoryId,
+        qty: item.qty,
+        unitPrice: item.unitPrice,
+        discount: item.discount || 0,
+      })),
+      partyId: partyId || undefined,
+      partyName: partyName || undefined,
+      partyPhone: partyPhone || undefined,
+      paymentMode: paymentMode || 'CASH',
+      cashAmount: cashAmount || undefined,
+      upiAmount: upiAmount || undefined,
+      creditAmount: creditAmount || undefined,
+      notes: notes || undefined,
+    });
+    console.log('[Sync] Invoice synced to backend');
+  } catch (err) {
+    console.warn('[Sync] Invoice API failed (saved locally):', err.message);
+  }
+}
+
+/**
+ * Sync a single-item stock purchase to the backend.
+ */
+export async function syncPurchase({ inventoryId, qty, buyingPrice, newSellingPrice, supplier, invoiceNo, payment, creditDays, notes }) {
+  if (!isDbUuid(inventoryId)) return;
+  try {
+    await api.post('/api/shop/inventory/purchase', {
+      inventoryId, qty, buyingPrice, newSellingPrice, supplier, invoiceNo, payment, creditDays, notes,
+    });
+    console.log('[Sync] Purchase synced to backend');
+  } catch (err) {
+    console.warn('[Sync] Purchase API failed (saved locally):', err.message);
+  }
+}
+
+/**
+ * Sync a stock adjustment to the backend.
+ * type: RETURN_IN | RETURN_OUT | DAMAGE | THEFT | AUDIT | ADJUSTMENT | OPENING
+ */
+export async function syncAdjustment({ inventoryId, type, qty, reason, refundMethod, refundAmount, supplierName, originalInvoice, notes }) {
+  if (!isDbUuid(inventoryId)) return;
+  try {
+    await api.post('/api/shop/inventory/adjust', {
+      inventoryId, type, qty, reason, refundMethod, refundAmount, supplierName, originalInvoice, notes,
+    });
+    console.log('[Sync] Adjustment synced to backend');
+  } catch (err) {
+    console.warn('[Sync] Adjustment API failed (saved locally):', err.message);
+  }
+}
+
+/**
+ * Returns true if the ID looks like a real Postgres UUID (from the DB),
+ * false if it's seed data (e.g. "p1", "p2", "s1").
+ */
+function isDbUuid(id) {
+  return typeof id === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id);
 }

@@ -1,9 +1,11 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { T, FONT, GLOBAL_CSS } from "../../theme";
 import { useStore } from "../../store";
 import { getHomeData } from "../api/engine";
+import { browseMarketplace, buildHomeDataFromApi } from "../../api/marketplace.js";
 import { ProfileDropdown } from "../../components/ProfileDropdown";
 import { clearTokens } from "../../api/client.js";
+import { CATEGORIES } from "../../utils";
 
 // Components
 import { SearchBar } from "../components/SearchBar";
@@ -38,15 +40,61 @@ export function MarketplaceHome() {
   const [activeFilters, setActiveFilters] = useState([]);
   const [sortBy, setSortBy] = useState("relevance"); // relevance | price_asc | price_desc | newest
 
-  // Fetch / Simulate API Call when Vehicle context changes
+  // Track user geo for distance sorting (best-effort, no permission required)
+  const userGeoRef = useRef(null);
   useEffect(() => {
+    if (navigator.geolocation) {
+      navigator.geolocation.getCurrentPosition(
+        pos => { userGeoRef.current = { lat: pos.coords.latitude, lng: pos.coords.longitude }; },
+        () => {} // silently ignore denial
+      );
+    }
+  }, []);
+
+  // Load home data — tries real API first, falls back to local engine
+  useEffect(() => {
+    let cancelled = false;
     setLoading(true);
-    // Simulate network delay
-    setTimeout(() => {
+
+    (async () => {
+      try {
+        const opts = { limit: 60 };
+        // Pass vehicle context if selected
+        if (selectedVehicle) {
+          opts.make     = selectedVehicle.brand || selectedVehicle.make;
+          opts.model    = selectedVehicle.model;
+          opts.year     = selectedVehicle.year;
+          opts.fuelType = selectedVehicle.fuel || selectedVehicle.fuelType;
+        }
+        // Pass user location for distance sort
+        if (userGeoRef.current) {
+          opts.lat = userGeoRef.current.lat;
+          opts.lng = userGeoRef.current.lng;
+        }
+
+        const browsed = await browseMarketplace(opts);
+        if (cancelled) return;
+
+        if (browsed.parts.length > 0) {
+          // ✅ Real API data
+          const resp = buildHomeDataFromApi(browsed, selectedVehicle, CATEGORIES);
+          setData(resp);
+          setLoading(false);
+          return;
+        }
+      } catch (err) {
+        // API unavailable — fall through to mock engine
+        console.warn('[Marketplace] API browse failed, using mock data:', err.message);
+      }
+
+      if (cancelled) return;
+      // 🔄 Fallback: local engine with seed/localStorage products
       const resp = getHomeData(products, shops, selectedVehicle);
       setData(resp);
       setLoading(false);
-    }, 600);
+    })();
+
+    return () => { cancelled = true; };
   }, [products, shops, selectedVehicle]);
 
   return (

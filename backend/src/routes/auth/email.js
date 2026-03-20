@@ -63,7 +63,7 @@ router.post('/register', async (req, res, next) => {
     await sendEmailOtp(emailNormalized);
     sendWelcomeEmail(emailNormalized, user.name).catch(() => {});
 
-    const payload = await createSession(res, user, { isNewUser: true });
+    const payload = await createSession(res, user, { isNewUser: true, req });
     res.status(201).json(payload);
   } catch (err) {
     next(err);
@@ -151,7 +151,7 @@ router.post('/login', emailLoginLimiter, async (req, res, next) => {
       await ensureAuthProvider(user.userId, 'EMAIL', normalizeEmail(user.email));
     }
 
-    const payload = await createSession(res, user, { isNewUser: false });
+    const payload = await createSession(res, user, { isNewUser: false, req });
     res.json(payload);
   } catch (err) {
     next(err);
