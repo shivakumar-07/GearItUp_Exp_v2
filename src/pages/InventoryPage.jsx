@@ -23,6 +23,7 @@ export function InventoryPage({ products, movements, activeShopId, onAdd, onEdit
     const [selBrand, setSelBrand] = useState("");
     const [selModel, setSelModel] = useState("");
     const [selYear, setSelYear] = useState("");
+    const [selectedIds, setSelectedIds] = useState([]);
 
     const brandModels = useMemo(() => selBrand ? getModelsForMfg(selBrand) : [], [selBrand]);
     const modelYears = useMemo(() => selModel ? getYearsForModel(selModel) : [], [selModel]);
@@ -79,14 +80,22 @@ export function InventoryPage({ products, movements, activeShopId, onAdd, onEdit
     };
 
     const handleGeneratePO = () => {
-        const lowItems = shopProducts.filter(p => p.stock < p.minStock);
-        if (lowItems.length === 0) {
-            toast?.("No items below minimum stock!", "info");
+        // Use selected items if any, otherwise default to all low stock items
+        let itemsToPO = [];
+        if (selectedIds.length > 0) {
+            itemsToPO = shopProducts.filter(p => selectedIds.includes(p.id));
+        } else {
+            itemsToPO = shopProducts.filter(p => p.stock < p.minStock);
+        }
+
+        if (itemsToPO.length === 0) {
+            toast?.("No items selected or below minimum stock!", "info");
             return;
         }
+
         // Group by supplier for real PO generation
         const bySupplier = {};
-        lowItems.forEach(p => {
+        itemsToPO.forEach(p => {
             const supplier = p.supplier || "Unknown Supplier";
             if (!bySupplier[supplier]) bySupplier[supplier] = [];
             const reorderQty = Math.max(p.minStock * 2 - p.stock, p.minStock);
@@ -104,7 +113,23 @@ export function InventoryPage({ products, movements, activeShopId, onAdd, onEdit
         rows.push(["", "", "", "", "", "", "TOTAL:", "", totalCost]);
         const dateStr = new Date().toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" }).replace(/\s/g, "_");
         downloadCSV(`Draft_PO_${dateStr}.csv`, generateCSV(headers, rows));
-        toast?.(`Draft PO generated: ${lowItems.length} items across ${Object.keys(bySupplier).length} suppliers · ${fmt(totalCost)} estimated cost`, "success", "📦 PO Downloaded");
+        toast?.(`Draft PO generated: ${itemsToPO.length} items across ${Object.keys(bySupplier).length} suppliers · ${fmt(totalCost)} estimated cost`, "success", "📦 PO Downloaded");
+        
+        // Clear selection after generation
+        setSelectedIds([]);
+    };
+
+    const toggleSelect = (id, e) => {
+        e?.stopPropagation();
+        setSelectedIds(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
+    };
+
+    const toggleSelectAll = () => {
+        if (selectedIds.length === filtered.length) {
+            setSelectedIds([]);
+        } else {
+            setSelectedIds(filtered.map(p => p.id));
+        }
     };
 
     return (
@@ -187,9 +212,9 @@ export function InventoryPage({ products, movements, activeShopId, onAdd, onEdit
                     { value: "value", label: "Sort: Inventory Value ↓" },
                     { value: "sell", label: "Sort: Sell Price ↓" },
                 ]} />
-                {(counts.low + counts.out) > 0 && (
+                {(counts.low + counts.out > 0 || selectedIds.length > 0) && (
                     <Btn variant="sky" size="sm" onClick={handleGeneratePO}>
-                        📦 Generate Draft PO ({counts.low + counts.out})
+                        📦 Generate Draft PO {selectedIds.length > 0 ? `(${selectedIds.length} selected)` : `(${counts.low + counts.out})`}
                     </Btn>
                 )}
                 <Btn variant="subtle" size="sm" onClick={() => {
@@ -250,6 +275,14 @@ export function InventoryPage({ products, movements, activeShopId, onAdd, onEdit
                 <table style={{ width: "100%", borderCollapse: "collapse" }}>
                     <thead>
                         <tr style={{ background: T.surface, borderBottom: `1px solid ${T.border}` }}>
+                            <th style={{ padding: "10px 12px", width: 30 }}>
+                                <input type="checkbox" 
+                                    checked={selectedIds.length > 0 && selectedIds.length === filtered.length}
+                                    ref={el => { if (el) el.indeterminate = selectedIds.length > 0 && selectedIds.length < filtered.length; }}
+                                    onChange={toggleSelectAll} 
+                                    style={{ cursor: "pointer" }} 
+                                />
+                            </th>
                             {["", "Product", "Cat.", "OEM", "Buy", "Sell", "Profit", "Margin", "Stock", "7D Sales", "Location", "Status", ""].map((h, i) => (
                                 <th key={i} style={{ padding: "10px 12px", textAlign: "left", color: T.t3, fontWeight: 600, fontSize: 11, textTransform: "uppercase", letterSpacing: "1.2px", fontFamily: FONT.ui, whiteSpace: "nowrap" }}>{h}</th>
                             ))}
@@ -264,10 +297,18 @@ export function InventoryPage({ products, movements, activeShopId, onAdd, onEdit
                                 <>
                                     <tr key={p.id} className="row-hover" onClick={() => setExpandedId(expandedId === p.id ? null : p.id)} style={{
                                         borderBottom: expandedId === p.id ? "none" : `1px solid ${T.border}`,
-                                        background: expandedId === p.id ? T.surface : T.card,
+                                        background: selectedIds.includes(p.id) ? `${T.sky}08` : (expandedId === p.id ? T.surface : T.card),
                                         cursor: "pointer", transition: "background 0.15s",
                                         borderLeft: `3px solid ${st === "out" ? T.crimson : st === "low" ? T.amber : T.emerald}`,
                                     }}>
+                                        <td style={{ padding: "10px 12px", textAlign: "center" }}>
+                                            <input type="checkbox" 
+                                                checked={selectedIds.includes(p.id)} 
+                                                onChange={(e) => toggleSelect(p.id, e)}
+                                                onClick={e => e.stopPropagation()}
+                                                style={{ cursor: "pointer" }} 
+                                            />
+                                        </td>
                                         <td style={{ padding: "10px 10px 10px 14px", width: 44 }}>
                                             {p.image && p.image.startsWith("http") ? (
                                                 <img src={p.image} alt="" style={{ width: 34, height: 34, borderRadius: 7, objectFit: "cover", display: "block" }}
@@ -323,7 +364,7 @@ export function InventoryPage({ products, movements, activeShopId, onAdd, onEdit
                                     {/* Expandable Detail Panel */}
                                     {expandedId === p.id && (
                                         <tr style={{ background: T.surface, borderBottom: `1px solid ${T.border}` }}>
-                                            <td colSpan={12} style={{ padding: 0 }}>
+                                            <td colSpan={13} style={{ padding: 0 }}>
                                                 <div style={{ padding: "16px 24px 20px", animation: "fadeIn 0.2s ease" }}>
                                                     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
                                                         <div style={{ fontSize: 14, fontWeight: 800, color: T.t1, display: "flex", gap: 8, alignItems: "center" }}>
