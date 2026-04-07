@@ -281,6 +281,10 @@ export function HistoryPage({ movements, activeShopId }) {
     const [expandedKey, setExpandedKey] = useState(null);
     const [dateFrom, setDateFrom] = useState("");
     const [dateTo, setDateTo] = useState("");
+    const [visibleCount, setVisibleCount] = useState(50);
+    const [typeFilter, setTypeFilter] = useState([]);
+    const [colVisibility, setColVisibility] = useState({ profit: true, invoice: true, payment: true });
+    const toggleCol = (col) => setColVisibility(prev => ({ ...prev, [col]: !prev[col] }));
 
     const shopMovements = useMemo(() => movements.filter(m => m.shopId === activeShopId), [movements, activeShopId]);
 
@@ -293,11 +297,12 @@ export function HistoryPage({ movements, activeShopId }) {
             return m.type === filter;
         })
         .filter(m => !search || [m.productName, m.invoiceNo, m.batchId, m.supplier, m.supplierName, m.customerName, m.note].some(s => (s || "").toLowerCase().includes(search.toLowerCase())))
+        .filter(m => typeFilter.length === 0 || typeFilter.includes(m.type))
         .filter(m => {
             if (dateFrom) { const from = new Date(dateFrom).getTime(); if (m.date < from) return false; }
             if (dateTo) { const to = new Date(dateTo).setHours(23, 59, 59, 999); if (m.date > to) return false; }
             return true;
-        }), [sorted, filter, search, dateFrom, dateTo]);
+        }), [sorted, filter, search, typeFilter, dateFrom, dateTo]);
 
     // Group by invoiceNo or batchId so multi-item bills collapse into one row
     const groups = useMemo(() => groupMovements(filtered), [filtered]);
@@ -322,7 +327,7 @@ export function HistoryPage({ movements, activeShopId }) {
 
     return (
         <div className="page-in" style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 12 }}>
+            <div className="kpi-grid-6" style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 12 }}>
                 <StatCard label="Total Purchases" value={fmt(totals.purchases)} icon="📥" color={T.sky} sub={`${totals.count_p} entries`} />
                 <StatCard label="Total Sales" value={fmt(totals.sales)} icon="📤" color={T.amber} sub={`${totals.count_s} transactions`} />
                 <StatCard label="Total Profit" value={fmt(totals.profit)} icon="📈" color={T.emerald} sub={pct(totals.profit, totals.sales) + " margin"} />
@@ -359,11 +364,46 @@ export function HistoryPage({ movements, activeShopId }) {
                 <Btn variant="subtle" size="sm" onClick={() => exportMovementsCSV(filtered)}>⬇ Export CSV</Btn>
             </div>
 
-            <div style={{ fontSize: 12, color: T.t3 }}>
-                Showing <span style={{ color: T.t1, fontWeight: 700 }}>{groups.length}</span> {groups.length !== filtered.length && <span>(grouped from <span style={{ color: T.t1, fontWeight: 700 }}>{filtered.length}</span> entries)</span>} of {shopMovements.length} total entries
+            {/* Movement Type Filter Chips */}
+            <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                {["SALE", "PURCHASE", "RETURN_IN", "RETURN_OUT", "ADJUST", "DAMAGE", "PAYMENT", "RECEIPT"].map(t => (
+                    <button key={t}
+                        onClick={() => setTypeFilter(prev => prev.includes(t) ? prev.filter(x => x !== t) : [...prev, t])}
+                        style={{
+                            padding: "3px 11px", borderRadius: 99, border: "none", cursor: "pointer",
+                            fontSize: 11, fontWeight: 600, transition: "all 0.15s", fontFamily: FONT.ui,
+                            background: typeFilter.includes(t) ? T.amber : T.surface,
+                            color: typeFilter.includes(t) ? "#000" : T.t3,
+                        }}>{t}</button>
+                ))}
+                {typeFilter.length > 0 && (
+                    <button onClick={() => setTypeFilter([])}
+                        style={{
+                            padding: "3px 11px", borderRadius: 99, border: `1px solid ${T.border}`,
+                            cursor: "pointer", fontSize: 11, color: T.t3, background: "transparent", fontFamily: FONT.ui,
+                        }}>Clear</button>
+                )}
+            </div>
+
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                <div style={{ fontSize: 12, color: T.t3 }}>
+                    Showing <span style={{ color: T.t1, fontWeight: 700 }}>{Math.min(visibleCount, groups.length)}</span> {groups.length !== filtered.length && <span>(grouped from <span style={{ color: T.t1, fontWeight: 700 }}>{filtered.length}</span> entries)</span>} of {shopMovements.length} total entries
+                </div>
+                <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                    <span style={{ fontSize: 10, color: T.t4, fontWeight: 600, textTransform: "uppercase" }}>Columns:</span>
+                    {[['profit', 'Profit'], ['invoice', 'Invoice'], ['payment', 'Payment']].map(([k, l]) => (
+                        <button key={k} onClick={() => toggleCol(k)} style={{
+                            padding: "3px 8px", borderRadius: 4, border: `1px solid ${colVisibility[k] ? T.amber : T.border}`,
+                            background: colVisibility[k] ? T.amberSoft : "transparent",
+                            color: colVisibility[k] ? T.amber : T.t3,
+                            fontSize: 10, fontWeight: 600, cursor: "pointer", fontFamily: FONT.ui,
+                        }}>{l}</button>
+                    ))}
+                </div>
             </div>
 
             <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: 14, overflow: "hidden" }}>
+              <div className="table-scroll">
                 <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
                     <thead>
                         <tr style={{ background: T.surface, borderBottom: `1px solid ${T.border}` }}>
@@ -374,21 +414,67 @@ export function HistoryPage({ movements, activeShopId }) {
                     </thead>
                     <tbody>
                         {groups.length === 0 ? (
-                            <tr><td colSpan={10} style={{ padding: "40px", textAlign: "center", color: T.t3, fontFamily: FONT.ui }}>No records found.</td></tr>
-                        ) : groups.map((group, i) => {
+                            <tr><td colSpan={10} style={{ padding: "48px", textAlign: "center" }}>
+                                <div style={{ fontSize: 48, opacity: 0.3, marginBottom: 12 }}>⊞</div>
+                                <div style={{ fontSize: 14, fontWeight: 600, color: T.t2, marginBottom: 4 }}>No records found</div>
+                                <div style={{ fontSize: 12, color: T.t3 }}>Try adjusting your filters or date range</div>
+                            </td></tr>
+                        ) : (() => {
+                            const now = new Date();
+                            const todayStr = now.toDateString();
+                            const yesterdayStr = new Date(now - 86400000).toDateString();
+                            const weekAgo = now.getTime() - 7 * 86400000;
+                            let lastDateGroup = "";
+                            return groups.slice(0, visibleCount).map((group, i) => {
+                            const firstDate = new Date(group.items[0].date);
+                            const dateStr = firstDate.toDateString();
+                            let dateGroupLabel = "";
+                            if (dateStr !== lastDateGroup) {
+                                lastDateGroup = dateStr;
+                                if (dateStr === todayStr) dateGroupLabel = "Today";
+                                else if (dateStr === yesterdayStr) dateGroupLabel = "Yesterday";
+                                else if (firstDate.getTime() > weekAgo) dateGroupLabel = "This Week";
+                                else dateGroupLabel = firstDate.toLocaleDateString("en-IN", { day: "numeric", month: "long", year: "numeric" });
+                            }
+
                             const rowKey = group.key || group.items[0].id;
                             const isExpanded = expandedKey === rowKey;
                             const toggle = () => setExpandedKey(isExpanded ? null : rowKey);
-                            const isLast = i === groups.length - 1;
+                            const isLast = i === Math.min(visibleCount, groups.length) - 1;
 
-                            if (group.items.length > 1) {
-                                return <GroupRow key={rowKey} group={group} isExpanded={isExpanded} onToggle={toggle} isLast={isLast} />;
-                            }
-                            return <SingleRow key={rowKey} m={group.items[0]} isExpanded={isExpanded} onToggle={toggle} isLast={isLast} />;
-                        })}
+                            return (
+                                <React.Fragment key={rowKey}>
+                                    {dateGroupLabel && (
+                                        <tr>
+                                            <td colSpan={10} style={{
+                                                padding: "10px 14px 6px", position: "sticky", top: 0, zIndex: 2,
+                                                background: T.surface, borderBottom: `1px solid ${T.border}`,
+                                            }}>
+                                                <span style={{ fontSize: 11, fontWeight: 700, color: T.amber, textTransform: "uppercase", letterSpacing: "0.08em" }}>{dateGroupLabel}</span>
+                                            </td>
+                                        </tr>
+                                    )}
+                                    {group.items.length > 1
+                                        ? <GroupRow group={group} isExpanded={isExpanded} onToggle={toggle} isLast={isLast} />
+                                        : <SingleRow m={group.items[0]} isExpanded={isExpanded} onToggle={toggle} isLast={isLast} />
+                                    }
+                                </React.Fragment>
+                            );
+                        });
+                    })()}
                     </tbody>
                 </table>
+              </div>
             </div>
+
+            {/* Load More */}
+            {visibleCount < groups.length && (
+                <div style={{ textAlign: "center", padding: "12px 0" }}>
+                    <Btn variant="ghost" onClick={() => setVisibleCount(v => v + 50)}>
+                        Load 50 more ({groups.length - visibleCount} remaining)
+                    </Btn>
+                </div>
+            )}
         </div>
     );
 }

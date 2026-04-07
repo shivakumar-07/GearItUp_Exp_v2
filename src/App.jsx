@@ -1,11 +1,13 @@
-import { useState, useCallback, Component, createContext, useContext, useMemo, lazy, Suspense } from "react";
+import { useState, useCallback, useEffect, Component, createContext, useContext, useMemo, lazy, Suspense } from "react";
 import { Routes, Route, Navigate, useNavigate, useLocation } from "react-router-dom";
 import { T, FONT, GLOBAL_CSS } from "./theme";
 import { fmt, uid } from "./utils";
 import { useStore } from "./store";
 import { Toast, useToast, Btn } from "./components/ui";
-import { setTokens } from "./api/client.js";
+import { setTokens, clearTokens, api } from "./api/client.js";
 import { syncInvoice, syncPurchase, syncAdjustment } from "./api/sync.js";
+import { ShortcutOverlay } from "./components/ShortcutOverlay";
+import { CommandPalette } from "./components/CommandPalette";
 
 // Always-loaded: auth, shell chrome, modals (needed on first render)
 import { RequireAuth, getDefaultRoute } from "./components/RequireAuth";
@@ -40,13 +42,24 @@ const CheckoutPage       = lazy(() => import("./marketplace/pages/CheckoutPage")
 const OrderTrackingPage  = lazy(() => import("./marketplace/pages/OrderTrackingPage").then(m => ({ default: m.OrderTrackingPage })));
 const AdminPage          = lazy(() => import("./marketplace/pages/AdminPage").then(m => ({ default: m.AdminPage })));
 
-// Shared page-transition fallback (matches app bg so there's no flash)
+// Shared page-transition fallback — skeletal shimmer instead of a spinner
 const PageLoader = () => (
-  <div style={{ display: "flex", alignItems: "center", justifyContent: "center", minHeight: "60vh" }}>
-    <div style={{ textAlign: "center" }}>
-      <div style={{ fontSize: 32, marginBottom: 10, animation: "pulse 1.2s infinite" }}>⚙️</div>
-      <div style={{ color: T.t4, fontSize: 13, fontFamily: FONT.ui }}>Loading…</div>
+  <div style={{ padding: "28px 32px", fontFamily: FONT.ui }}>
+    {/* Simulated page skeleton */}
+    <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 28 }}>
+      <div className="skeleton-shimmer" style={{ width: 40, height: 40, borderRadius: 10 }} />
+      <div style={{ flex: 1 }}>
+        <div className="skeleton-shimmer" style={{ height: 16, width: "30%", borderRadius: 6, marginBottom: 8 }} />
+        <div className="skeleton-shimmer" style={{ height: 11, width: "18%", borderRadius: 6 }} />
+      </div>
     </div>
+    <div className="kpi-grid-6" style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 14, marginBottom: 24 }}>
+      {[1,2,3,4].map(i => (
+        <div key={i} className="skeleton-shimmer" style={{ height: 80, borderRadius: 12 }} />
+      ))}
+    </div>
+    <div className="skeleton-shimmer" style={{ height: 220, borderRadius: 12, marginBottom: 14 }} />
+    <div className="skeleton-shimmer" style={{ height: 120, borderRadius: 12 }} />
   </div>
 );
 
@@ -114,20 +127,30 @@ function ERPShell({ children }) {
   const location = useLocation();
   const [shopEdit, setShopEdit] = useState(null);
 
-  const todaySales = (movements || []).filter((m) => m.shopId === activeShopId && m.type === "SALE" && m.date >= Date.now() - 86400000);
-  const todayRev = todaySales.reduce((s, m) => s + m.total, 0);
+  const todaySales = useMemo(() => (movements || []).filter((m) => m.shopId === activeShopId && m.type === "SALE" && m.date >= Date.now() - 86400000), [movements, activeShopId]);
+  const todayRev = useMemo(() => todaySales.reduce((s, m) => s + m.total, 0), [todaySales]);
   const stockSt = (p) => { if (p.stock <= 0) return "out"; if (p.stock < p.minStock) return "low"; return "ok"; };
-  const lowCount = (products || []).filter((p) => p.shopId === activeShopId && stockSt(p) !== "ok").length;
-  const pendingOrders = (orders || []).filter((o) => o.shopId === activeShopId && (o.status === "NEW" || o.status === "placed")).length;
-  const shop = (shops || []).find((s) => s.id === activeShopId) || { name: "My Shop", city: "Location" };
+  const lowStockProducts = useMemo(() => (products || []).filter((p) => p.shopId === activeShopId && stockSt(p) !== "ok"), [products, activeShopId]);
+  const lowCount = lowStockProducts.length;
+  const pendingOrders = useMemo(() => (orders || []).filter((o) => o.shopId === activeShopId && (o.status === "NEW" || o.status === "placed")).length, [orders, activeShopId]);
+  const shop = useMemo(() => (shops || []).find((s) => s.id === activeShopId) || { name: "My Shop", city: "Location" }, [shops, activeShopId]);
   const currentPath = location.pathname;
+
+  // Low stock alert banner dismiss (per session)
+  const [lowStockDismissed, setLowStockDismissed] = useState(() => {
+    try { return sessionStorage.getItem("vl_low_stock_dismissed") === "1"; } catch { return false; }
+  });
+  const dismissLowStock = () => {
+    setLowStockDismissed(true);
+    try { sessionStorage.setItem("vl_low_stock_dismissed", "1"); } catch {}
+  };
 
   return (
     <div style={{ minHeight: "100vh", background: T.bg, fontFamily: FONT.ui, color: T.t1 }}>
       <style>{GLOBAL_CSS}</style>
 
       {/* TOPBAR */}
-      <div style={{ height: 56, background: T.surface, borderBottom: `1px solid ${T.border}`, display: "flex", alignItems: "center", padding: "0 20px 0 88px", position: "sticky", top: 0, zIndex: 500, gap: 10, boxShadow: `0 4px 24px rgba(0,0,0,0.3), 0 1px 0 ${T.border}` }}>
+      <div className="erp-topbar" style={{ height: 56, background: T.surface, borderBottom: `1px solid ${T.border}`, display: "flex", alignItems: "center", padding: "0 20px 0 88px", position: "sticky", top: 0, zIndex: 500, gap: 10, boxShadow: `0 4px 24px rgba(0,0,0,0.3), 0 1px 0 ${T.border}` }}>
         <div style={{ display: "flex", alignItems: "center", gap: 10, marginRight: 12, position: "relative" }}>
           <div onClick={() => setShopEdit({ name: shop.name, city: shop.city })} style={{ cursor: "pointer" }} title="Edit shop details">
             <div style={{ fontSize: 14, fontWeight: 800, color: T.t1, letterSpacing: "-0.02em", display: "flex", alignItems: "center", gap: 4 }}>{shop.name} <span style={{ fontSize: 10, color: T.t4 }}>✏️</span></div>
@@ -152,41 +175,142 @@ function ERPShell({ children }) {
           )}
         </div>
         <div style={{ flex: 1 }} />
-        {todayRev > 0 && (<div style={{ background: T.emeraldBg, border: `1px solid ${T.emerald}33`, borderRadius: 8, padding: "5px 12px", fontSize: 12, color: T.emerald, fontWeight: 700, fontFamily: FONT.mono, display: "flex", alignItems: "center", gap: 6 }}>📈 Today: {fmt(todayRev)}</div>)}
-        {lowCount > 0 && (<button onClick={() => navigate("/inventory")} style={{ background: T.crimsonBg, border: `1px solid ${T.crimson}33`, borderRadius: 8, padding: "5px 12px", fontSize: 12, color: T.crimson, fontWeight: 700, cursor: "pointer", fontFamily: FONT.ui, display: "flex", alignItems: "center", gap: 5 }}>⚠ {lowCount} alert{lowCount > 1 ? "s" : ""}</button>)}
-        <Btn size="sm" variant="ghost" onClick={() => navigate("/billing")} style={{ borderColor: T.border }}>🧾 POS</Btn>
-        <Btn size="sm" variant="amber" onClick={() => setCatalogModal(true)}>＋ Product</Btn>
-        <button onClick={() => { if (confirm("Reset all data to defaults?")) resetAll(); }} style={{ background: "transparent", border: `1px solid ${T.border}`, borderRadius: 8, padding: "5px 10px", fontSize: 11, color: T.t3, cursor: "pointer", fontWeight: 600, fontFamily: FONT.ui }}>🔄</button>
+        {todayRev > 0 && (<div className="topbar-secondary" style={{ background: T.emeraldBg, border: `1px solid ${T.emerald}33`, borderRadius: 8, padding: "5px 12px", fontSize: 12, color: T.emerald, fontWeight: 700, fontFamily: FONT.mono, display: "flex", alignItems: "center", gap: 6 }}>📈 {fmt(todayRev)}</div>)}
+        {lowCount > 0 && (<button onClick={() => navigate("/inventory")} style={{ background: T.crimsonBg, border: `1px solid ${T.crimson}33`, borderRadius: 8, padding: "5px 12px", fontSize: 12, color: T.crimson, fontWeight: 700, cursor: "pointer", fontFamily: FONT.ui, display: "flex", alignItems: "center", gap: 5 }}>⚠ {lowCount}</button>)}
+        <Btn size="sm" variant="ghost" onClick={() => navigate("/billing")} style={{ borderColor: T.border }}>🧾</Btn>
+        <Btn size="sm" variant="amber" onClick={() => setCatalogModal(true)}>＋</Btn>
+        <button className="topbar-secondary" onClick={() => { if (confirm("Reset all data to defaults?")) resetAll(); }} style={{ background: "transparent", border: `1px solid ${T.border}`, borderRadius: 8, padding: "5px 10px", fontSize: 11, color: T.t3, cursor: "pointer", fontWeight: 600, fontFamily: FONT.ui }}>🔄</button>
         <ProfileDropdown user={currentUser} onLogout={handleLogout} />
       </div>
 
+      {/* LOW STOCK ALERT BANNER */}
+      {lowCount > 0 && !lowStockDismissed && (
+        <div data-print-hide className="erp-banner" style={{
+          background: T.amberGlow, borderBottom: `1px solid ${T.amber}33`,
+          padding: "8px 20px 8px 92px", display: "flex", alignItems: "center", gap: 10,
+          animation: "fadeDown 0.25s ease both",
+        }}>
+          <span style={{ fontSize: 14 }}>⚠</span>
+          <span style={{ fontSize: 13, color: T.amber, fontWeight: 600, flex: 1 }}>
+            {lowCount} product{lowCount > 1 ? "s" : ""} below reorder level
+          </span>
+          <button
+            onClick={() => navigate("/inventory")}
+            style={{
+              background: T.amber, color: "#000", border: "none", borderRadius: 6,
+              padding: "4px 12px", fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: FONT.ui,
+            }}
+          >View All</button>
+          <button
+            onClick={dismissLowStock}
+            style={{ background: "none", border: "none", cursor: "pointer", color: T.t3, fontSize: 16, padding: "0 4px" }}
+          >×</button>
+        </div>
+      )}
+
       {/* PAGE */}
-      <div style={{ padding: "24px 28px 24px 92px", maxWidth: 1440, margin: "0 auto" }}>
+      <div className="erp-content" style={{ padding: "24px 28px 24px 92px", maxWidth: 1440, margin: "0 auto" }}>
         {children}
       </div>
 
       {/* Edit existing product */}
-      <ProductModal open={pModal.open} product={pModal.product} activeShopId={activeShopId} onClose={() => setPModal({ open: false, product: null })} onSave={saveProduct} toast={toast} />
+      <ProductModal open={pModal.open} product={pModal.product} products={products} activeShopId={activeShopId} onClose={() => setPModal({ open: false, product: null })} onSave={saveProduct} toast={toast} />
       {/* Add new products — cart/bucket procurement flow */}
       <BulkStockInModal open={catalogModal} onClose={() => setCatalogModal(false)} onSave={handleBulkStockIn} toast={toast} activeShopId={activeShopId} />
       <Toast items={toasts} onRemove={removeToast} />
 
-      {/* LEFT SIDEBAR */}
-      <div style={{ position: "fixed", left: 0, top: 0, bottom: 0, width: 68, zIndex: 600, background: `${T.surface}f5`, backdropFilter: "blur(16px)", borderRight: `1px solid ${T.border}`, display: "flex", flexDirection: "column", alignItems: "center", paddingTop: 10, gap: 2 }}>
-        <div style={{ width: 40, height: 40, borderRadius: 12, background: `linear-gradient(135deg,${T.amber},${T.amberDim})`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 17, fontWeight: 900, color: "#000", boxShadow: `0 2px 12px ${T.amber}55`, marginBottom: 4 }}>{shop.name?.charAt(0) || "S"}</div>
-        <div style={{ fontSize: 7, color: T.amber, fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 8 }}>ERP</div>
+      {/* LEFT SIDEBAR / BOTTOM NAV */}
+      <div className="erp-sidebar" style={{
+        position: "fixed", left: 0, top: 0, bottom: 0, width: 68, zIndex: 600,
+        background: `${T.surface}f8`, backdropFilter: "blur(20px)",
+        borderRight: `1px solid ${T.border}`,
+        display: "flex", flexDirection: "column", alignItems: "center",
+        paddingTop: 10, gap: 2,
+      }}>
+        {/* Brand mark */}
+        <div className="sidebar-brand" style={{
+          width: 40, height: 40, borderRadius: 12,
+          background: `linear-gradient(135deg, ${T.amber}, ${T.amberDim})`,
+          display: "flex", alignItems: "center", justifyContent: "center",
+          fontSize: 17, fontWeight: 900, color: "#000",
+          boxShadow: `0 2px 12px ${T.amber}44`, marginBottom: 3,
+          flexShrink: 0,
+        }}>
+          {shop.name?.charAt(0) || "S"}
+        </div>
+        <div className="sidebar-brand" style={{ fontSize: 7, color: T.amber, fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.07em", marginBottom: 8 }}>
+          ERP
+        </div>
+
         {NAV_ITEMS.map((n) => {
           const isActive = currentPath === n.path || currentPath.startsWith(n.path + "/");
           return (
-            <button key={n.key} onClick={() => navigate(n.path)} title={n.label} style={{ width: 58, height: 46, borderRadius: 10, border: `1px solid ${isActive ? T.amber + "44" : "transparent"}`, cursor: "pointer", background: isActive ? T.amberGlow : "transparent", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 1, transition: "all 0.15s", padding: "2px 0", position: "relative" }}>
-              <span style={{ fontSize: 15 }}>{n.icon}</span>
-              <span style={{ fontSize: 7, fontWeight: 700, color: isActive ? T.amber : T.t3, fontFamily: FONT.ui, letterSpacing: "0.02em" }}>{n.label}</span>
-              {n.key === "orders" && pendingOrders > 0 && <span style={{ position: "absolute", top: 2, right: 6, background: T.crimson, color: "#fff", fontSize: 8, borderRadius: "50%", width: 14, height: 14, display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 900 }}>{pendingOrders}</span>}
-              {n.key === "inventory" && lowCount > 0 && <span style={{ position: "absolute", top: 2, right: 6, background: T.amber, color: "#000", fontSize: 8, borderRadius: "50%", width: 14, height: 14, display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 900 }}>{lowCount}</span>}
+            <button
+              key={n.key}
+              onClick={() => navigate(n.path)}
+              title={`${n.label}`}
+              style={{
+                width: 58, height: 46, borderRadius: 10,
+                border: "none",
+                cursor: "pointer",
+                background: isActive ? T.amberGlow : "transparent",
+                display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
+                gap: 1, transition: "background 0.15s, opacity 0.15s",
+                padding: "2px 0", position: "relative",
+                outline: "none",
+              }}
+              onMouseEnter={e => { if (!isActive) e.currentTarget.style.background = `${T.amber}0d`; }}
+              onMouseLeave={e => { if (!isActive) e.currentTarget.style.background = "transparent"; }}
+            >
+              {/* Active left-edge indicator bar */}
+              {isActive && (
+                <span style={{
+                  position: "absolute", left: -5, top: "50%",
+                  transform: "translateY(-50%)",
+                  width: 3, height: 22, borderRadius: 3,
+                  background: T.amber,
+                  boxShadow: `0 0 8px ${T.amber}66`,
+                }} />
+              )}
+              <span style={{ fontSize: 14 }}>{n.icon}</span>
+              <span style={{
+                fontSize: 7, fontWeight: 700,
+                color: isActive ? T.amber : T.t3,
+                fontFamily: FONT.ui, letterSpacing: "0.02em",
+                transition: "color 0.15s",
+              }}>
+                {n.label}
+              </span>
+              {/* Badge: pending orders */}
+              {n.key === "orders" && pendingOrders > 0 && (
+                <span style={{
+                  position: "absolute", top: 3, right: 7,
+                  background: T.crimson, color: "#fff",
+                  fontSize: 8, borderRadius: "50%",
+                  width: 14, height: 14,
+                  display: "flex", alignItems: "center", justifyContent: "center",
+                  fontWeight: 900,
+                }}>
+                  {pendingOrders}
+                </span>
+              )}
+              {/* Badge: low stock */}
+              {n.key === "inventory" && lowCount > 0 && (
+                <span style={{
+                  position: "absolute", top: 3, right: 7,
+                  background: T.amber, color: "#000",
+                  fontSize: 8, borderRadius: "50%",
+                  width: 14, height: 14,
+                  display: "flex", alignItems: "center", justifyContent: "center",
+                  fontWeight: 900,
+                }}>
+                  {lowCount}
+                </span>
+              )}
             </button>
           );
         })}
-        <div style={{ flex: 1 }} />
+        <div className="sidebar-spacer" style={{ flex: 1 }} />
       </div>
     </div>
   );
@@ -202,21 +326,66 @@ function MPShell({ children }) {
   return (
     <>
       <style>{GLOBAL_CSS}</style>
-      <div style={{ paddingLeft: 68 }}>{children}</div>
+      <div className="mp-content" style={{ paddingLeft: 68 }}>{children}</div>
       <CartDrawer onCheckout={() => navigate("/marketplace/checkout")} />
-      <div style={{ position: "fixed", left: 0, top: 0, bottom: 0, width: 68, zIndex: 400, background: `${T.surface}ee`, backdropFilter: "blur(12px)", borderRight: `1px solid ${T.border}`, display: "flex", flexDirection: "column", alignItems: "center", paddingTop: 16, gap: 4 }}>
-        <div style={{ width: 40, height: 40, borderRadius: 12, background: `linear-gradient(135deg,${T.amber},${T.amberDim})`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 18, boxShadow: `0 2px 12px ${T.amber}55`, marginBottom: 8 }}>⚙️</div>
-        <div style={{ fontSize: 7, color: T.amber, fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 12 }}>Market</div>
+      <div className="mp-sidebar" style={{
+        position: "fixed", left: 0, top: 0, bottom: 0, width: 68, zIndex: 400,
+        background: `${T.surface}f0`, backdropFilter: "blur(16px)",
+        borderRight: `1px solid ${T.border}`,
+        display: "flex", flexDirection: "column", alignItems: "center",
+        paddingTop: 14, gap: 3,
+      }}>
+        <div className="sidebar-brand" style={{
+          width: 40, height: 40, borderRadius: 12,
+          background: `linear-gradient(135deg, ${T.amber}, ${T.amberDim})`,
+          display: "flex", alignItems: "center", justifyContent: "center",
+          fontSize: 16, boxShadow: `0 2px 12px ${T.amber}44`, marginBottom: 6,
+        }}>
+          ⚙️
+        </div>
+        <div className="sidebar-brand" style={{ fontSize: 7, color: T.amber, fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 10 }}>
+          Market
+        </div>
         {MP_NAV.map((a) => {
-          const isActive = currentPath === a.path;
+          const isActive = currentPath === a.path || currentPath.startsWith(a.path + "/");
           return (
-            <button key={a.key} onClick={() => navigate(a.path)} title={a.label} style={{ width: 58, height: 50, borderRadius: 10, border: `1px solid ${isActive ? a.color + "44" : T.border}`, cursor: "pointer", background: isActive ? `${a.color}22` : "transparent", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 2, transition: "all 0.15s", padding: "4px 0" }}>
-              <span style={{ fontSize: 16 }}>{a.icon}</span>
-              <span style={{ fontSize: 8, fontWeight: 700, color: isActive ? a.color : T.t3, fontFamily: FONT.ui, letterSpacing: "0.02em" }}>{a.label}</span>
+            <button
+              key={a.key}
+              onClick={() => navigate(a.path)}
+              title={a.label}
+              style={{
+                width: 58, height: 48, borderRadius: 10,
+                border: "none",
+                cursor: "pointer",
+                background: isActive ? `${a.color}18` : "transparent",
+                display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
+                gap: 2, transition: "background 0.15s",
+                padding: "4px 0", position: "relative", outline: "none",
+              }}
+              onMouseEnter={e => { if (!isActive) e.currentTarget.style.background = `${a.color}0d`; }}
+              onMouseLeave={e => { if (!isActive) e.currentTarget.style.background = "transparent"; }}
+            >
+              {isActive && (
+                <span style={{
+                  position: "absolute", left: -5, top: "50%",
+                  transform: "translateY(-50%)",
+                  width: 3, height: 20, borderRadius: 3,
+                  background: a.color,
+                }} />
+              )}
+              <span style={{ fontSize: 15 }}>{a.icon}</span>
+              <span style={{
+                fontSize: 8, fontWeight: 700,
+                color: isActive ? a.color : T.t3,
+                fontFamily: FONT.ui, letterSpacing: "0.02em",
+                transition: "color 0.15s",
+              }}>
+                {a.label}
+              </span>
             </button>
           );
         })}
-        <div style={{ flex: 1 }} />
+        <div className="sidebar-spacer" style={{ flex: 1 }} />
       </div>
       <Toast items={toasts} onRemove={removeToast} />
     </>
@@ -230,11 +399,11 @@ function AdminShell({ children }) {
   return (
     <>
       <style>{GLOBAL_CSS}</style>
-      <div style={{ paddingLeft: 68 }}>{children}</div>
-      <div style={{ position: "fixed", left: 0, top: 0, bottom: 0, width: 68, zIndex: 400, background: `${T.surface}ee`, backdropFilter: "blur(12px)", borderRight: `1px solid ${T.border}`, display: "flex", flexDirection: "column", alignItems: "center", paddingTop: 20, gap: 4 }}>
-        <div style={{ width: 40, height: 40, borderRadius: 12, background: "linear-gradient(135deg, #4F46E5, #7C3AED)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 18, boxShadow: "0 4px 16px rgba(79,70,229,0.4)", marginBottom: 12 }}>🛡️</div>
-        <div style={{ fontSize: 7, color: "#A78BFA", fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.08em" }}>Admin</div>
-        <div style={{ flex: 1 }} />
+      <div className="mp-content" style={{ paddingLeft: 68 }}>{children}</div>
+      <div className="admin-sidebar" style={{ position: "fixed", left: 0, top: 0, bottom: 0, width: 68, zIndex: 400, background: `${T.surface}ee`, backdropFilter: "blur(12px)", borderRight: `1px solid ${T.border}`, display: "flex", flexDirection: "column", alignItems: "center", paddingTop: 20, gap: 4 }}>
+        <div className="sidebar-brand" style={{ width: 40, height: 40, borderRadius: 12, background: "linear-gradient(135deg, #4F46E5, #7C3AED)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 18, boxShadow: "0 4px 16px rgba(79,70,229,0.4)", marginBottom: 12 }}>🛡️</div>
+        <div className="sidebar-brand" style={{ fontSize: 7, color: "#A78BFA", fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.08em" }}>Admin</div>
+        <div className="sidebar-spacer" style={{ flex: 1 }} />
       </div>
       <Toast items={toasts} onRemove={removeToast} />
     </>
@@ -270,7 +439,44 @@ function AppContent() {
   // ── UI state ──
   const [pModal, setPModal]       = useState({ open: false, product: null });
   const [catalogModal, setCatalogModal] = useState(false);
+  const [shortcutOverlay, setShortcutOverlay] = useState(false);
+  const [cmdPaletteOpen, setCmdPaletteOpen] = useState(false);
   const { items: toasts, add: toast, remove: removeToast } = useToast();
+
+  // ── Keyboard shortcut system ──
+  useEffect(() => {
+    const handler = (e) => {
+      // Ignore when typing in inputs/textareas
+      const tag = document.activeElement?.tagName;
+      const isInput = tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT";
+
+      // Ctrl/Cmd shortcuts
+      if (e.ctrlKey || e.metaKey) {
+        switch (e.key.toLowerCase()) {
+          case "n": e.preventDefault(); navigate("/billing"); break;
+          case "p": e.preventDefault(); navigate("/billing"); break;
+          case "i": e.preventDefault(); navigate("/inventory"); break;
+          case "h": e.preventDefault(); navigate("/history"); break;
+          case "k": e.preventDefault(); setCmdPaletteOpen(true); break;
+          case "b":
+            e.preventDefault();
+            // Focus barcode input if it exists on the page
+            const barcodeInput = document.querySelector('[data-barcode-input]');
+            if (barcodeInput) barcodeInput.focus();
+            break;
+          default: break;
+        }
+        return;
+      }
+
+      // ? key for shortcut overlay (only when not in an input)
+      if (e.key === "?" && !isInput) {
+        setShortcutOverlay(true);
+      }
+    };
+    document.addEventListener("keydown", handler);
+    return () => document.removeEventListener("keydown", handler);
+  }, [navigate]);
 
   // ── Auth handlers ──
   const handleLogin = useCallback((user) => {
@@ -287,6 +493,10 @@ function AppContent() {
   }, [navigate, setActiveShopId]);
 
   const handleLogout = useCallback(() => {
+    // Revoke the refresh token in the backend (fire-and-forget — don't block the UI)
+    const rt = localStorage.getItem("as_refresh_token");
+    api.post("/api/auth/logout", { refreshToken: rt }).catch(() => {});
+    clearTokens();
     localStorage.removeItem("as_user");
     localStorage.removeItem("as_refresh_token");
     localStorage.removeItem("vl_shopId"); // clear real shopId on logout
@@ -296,11 +506,20 @@ function AppContent() {
 
   // ── Business handlers ──
   const saveProduct = useCallback((p) => {
-    if (!products) return;
+    if (!products) return false;
+    // Duplicate SKU guard: ensure no other product in the same shop uses this SKU
+    if (p.sku) {
+      const dup = products.find(x => x.id !== p.id && x.shopId === p.shopId && x.sku === p.sku);
+      if (dup) {
+        toast?.(`SKU "${p.sku}" already used by "${dup.name}". Please use a unique SKU.`, "warning");
+        return false;
+      }
+    }
     const exists = products.find((x) => x.id === p.id);
     saveProducts(exists ? products.map((x) => (x.id === p.id ? p : x)) : [...products, p]);
     logAudit(exists ? "PRODUCT_UPDATED" : "PRODUCT_CREATED", "product", p.id, `${p.name} (${p.sku})`);
-  }, [products, saveProducts, logAudit]);
+    return true;
+  }, [products, saveProducts, logAudit, toast]);
 
   const handleBulkStockIn = useCallback(({ products: newProds = [], movements: newMovs = [] }) => {
     if (!products) return;
@@ -379,7 +598,13 @@ function AppContent() {
   const handleSale = useCallback((data) => {
     if (!products || !movements) return;
     const isQuote = data.type === "Quotation";
+    // Guard: prevent negative stock
     if (!isQuote) {
+      const productToSell = products.find(p => p.id === data.productId);
+      if (productToSell && data.qty > productToSell.stock) {
+        toast(`Not enough stock for ${productToSell.name}. Only ${productToSell.stock} available.`, "error");
+        return;
+      }
       saveProducts(products.map((p) => (p.id === data.productId ? { ...p, stock: Math.max(0, p.stock - data.qty) } : p)));
     }
     const sel = products.find((p) => p.id === data.productId);
@@ -388,9 +613,10 @@ function AppContent() {
     saveMovements([...movements, {
       id: "m" + uid(), shopId: activeShopId, productId: data.productId, productName: sel?.name || "",
       type: isQuote ? "ESTIMATE" : "SALE", qty: data.qty, unitPrice: data.sellPrice, sellingPrice: data.sellPrice,
-      total: data.total, gstAmount: data.gstAmount, profit: isQuote ? 0 : data.profit,
+      total: data.total, totalAmount: data.total, gstAmount: data.gstAmount, profit: isQuote ? 0 : data.profit,
       discount: data.discount, customerName: data.customerName, customerPhone: data.customerPhone,
       vehicleReg: data.vehicleReg, mechanic: data.mechanic, supplier: null, invoiceNo: data.invoiceNo,
+      partyId: data.partyId || null,
       payment: paymentStr, paymentMode: data.paymentMode || null, creditDays: 0, paymentStatus: isCredit && !isQuote ? "pending" : "paid",
       note: [data.customerName && `Customer: ${data.customerName}`, data.vehicleReg && `Vehicle: ${data.vehicleReg}`, data.notes].filter(Boolean).join(" · ") || (isQuote ? "Quotation generated" : "Walk-in sale"),
       date: data.date, ...(data.priceOverride && { priceOverride: data.priceOverride }),
@@ -416,6 +642,16 @@ function AppContent() {
   const handleMultiItemSale = useCallback((data) => {
     if (!products || !movements) return;
     const isQuote = data.type === "Quotation";
+    // Stock floor guard: check all items have enough stock before proceeding
+    if (!isQuote) {
+      for (const item of data.items) {
+        const prod = products.find(p => p.id === item.productId);
+        if (prod && item.qty > prod.stock) {
+          toast(`Not enough stock for "${prod.name}". Only ${prod.stock} available.`, "error");
+          return;
+        }
+      }
+    }
     const newMovements = [];
     let updatedProducts = [...products];
     let hasOverrides = false;
@@ -426,9 +662,10 @@ function AppContent() {
       newMovements.push({
         id: "m" + uid(), shopId: activeShopId, productId: item.productId, productName: item.name,
         type: isQuote ? "ESTIMATE" : "SALE", qty: item.qty, unitPrice: item.sellPrice, sellingPrice: item.sellPrice,
-        total: item.total, gstAmount: item.gstAmount, profit: isQuote ? 0 : item.profit,
+        total: item.total, totalAmount: item.total, gstAmount: item.gstAmount, profit: isQuote ? 0 : item.profit,
         discount: item.discount, customerName: data.customerName, customerPhone: data.customerPhone,
         vehicleReg: data.vehicleReg, mechanic: data.mechanic, supplier: null, invoiceNo: data.invoiceNo,
+        partyId: data.partyId || null,
         payment: paymentStr, paymentMode: data.paymentMode || null, creditDays: 0,
         paymentStatus: isCredit && !isQuote ? "pending" : "paid",
         note: [data.customerName && `Customer: ${data.customerName}`, data.vehicleReg && `Vehicle: ${data.vehicleReg}`, data.notes].filter(Boolean).join(" · ") || (isQuote ? "Quotation" : "POS Sale"),
@@ -512,10 +749,12 @@ function AppContent() {
     logAudit("ADJUSTMENT_" + data.adjustType, "movement", data.productId, `${labels[data.adjustType] || data.adjustType}: ${stockChange > 0 ? "+" : ""}${stockChange} units`);
     toast(`${labels[data.adjustType] || data.adjustType}: ${stockChange !== 0 ? (stockChange > 0 ? "+" : "") + stockChange + " units of " : ""}${sel?.name?.slice(0, 20) || "product"}${data.refundAmount ? " · " + fmt(data.refundAmount) : ""}`, data.adjustType === "RETURN_IN" || data.adjustType === "OPENING" ? "info" : data.adjustType === "CREDIT_NOTE" || data.adjustType === "DEBIT_NOTE" ? "success" : "warning", labels[data.adjustType] || data.adjustType);
     // Persist to backend (fire-and-forget)
+    // For AUDIT type, pass the signed stockChange so the backend applies the correct direction.
+    // For all other types the direction is implied by the type (e.g. DAMAGE is always negative).
     syncAdjustment({
       inventoryId: data.productId,
       type: data.adjustType,
-      qty: data.qty,
+      qty: data.adjustType === "AUDIT" ? stockChange : data.qty,
       reason: data.reason,
       refundMethod: data.refundMethod,
       refundAmount: data.refundAmount,
@@ -560,15 +799,32 @@ function AppContent() {
     saveProduct, handleBulkStockIn,
   }), [pModal, setPModal, catalogModal, setCatalogModal, toast, toasts, removeToast, currentUser, handleLogout, saveProduct, handleBulkStockIn]);
 
-  // ── Loading state ──
+  // Generate collision-proof invoice number
+  const genInvoiceNo = useCallback(() => {
+    const shopSuffix = (activeShopId || "0000").slice(-4).toUpperCase();
+    return shopSuffix + "-" + Date.now().toString(36).toUpperCase();
+  }, [activeShopId]);
+
+  // ── Loading state — skeletal screen, no spinner ──
   if (!loaded) {
     return (
-      <div style={{ minHeight: "100vh", background: T.bg, display: "flex", alignItems: "center", justifyContent: "center", fontFamily: FONT.ui }}>
-        <div style={{ textAlign: "center" }}>
-          <div style={{ fontSize: 42, animation: "pulse 1.5s infinite", marginBottom: 16 }}>⚙️</div>
-          <div style={{ color: T.t3, fontSize: 14 }}>Loading AutoSpace…</div>
-        </div>
+      <div style={{ minHeight: "100vh", background: T.bg, fontFamily: FONT.ui }}>
         <style>{GLOBAL_CSS}</style>
+        {/* Topbar skeleton */}
+        <div style={{ height: 56, background: T.surface, borderBottom: `1px solid ${T.border}`, display: "flex", alignItems: "center", padding: "0 24px", gap: 12 }}>
+          <div className="skeleton-shimmer" style={{ width: 32, height: 32, borderRadius: 8, flexShrink: 0 }} />
+          <div className="skeleton-shimmer" style={{ width: 120, height: 14, borderRadius: 6 }} />
+          <div style={{ flex: 1 }} />
+          <div className="skeleton-shimmer" style={{ width: 80, height: 28, borderRadius: 8 }} />
+          <div className="skeleton-shimmer" style={{ width: 32, height: 32, borderRadius: 8 }} />
+        </div>
+        <div style={{ padding: "32px 28px", maxWidth: 900 }}>
+          <div className="skeleton-shimmer" style={{ height: 24, width: "22%", borderRadius: 8, marginBottom: 24 }} />
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 14, marginBottom: 24 }}>
+            {[1,2,3].map(i => <div key={i} className="skeleton-shimmer" style={{ height: 90, borderRadius: 12 }} />)}
+          </div>
+          <div className="skeleton-shimmer" style={{ height: 260, borderRadius: 12 }} />
+        </div>
       </div>
     );
   }
@@ -612,6 +868,10 @@ function AppContent() {
         <Route path="*" element={<Navigate to={currentUser ? getDefaultRoute(currentUser.role) : "/login"} replace />} />
       </Routes>
       </Suspense>
+
+      {/* Global overlays */}
+      <ShortcutOverlay open={shortcutOverlay} onClose={() => setShortcutOverlay(false)} />
+      <CommandPalette open={cmdPaletteOpen} onClose={() => setCmdPaletteOpen(false)} onNavigate={(path) => navigate(path)} />
     </AppCtx.Provider>
   );
 }

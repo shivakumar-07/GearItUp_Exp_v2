@@ -4,7 +4,7 @@ import { uid, CATEGORIES, POSITIONS, ENGINE_TYPES, TRANSMISSIONS, EMOJIS, fmt } 
 import { MASTER_PRODUCTS } from "../marketplace/api/mockDatabase";
 import { Modal, Field, Input, Select, Divider, Btn } from "./ui";
 
-export function ProductModal({ open, onClose, product, onSave, toast, activeShopId }) {
+export function ProductModal({ open, onClose, product, products, onSave, toast, activeShopId }) {
     const isEdit = !!product;
     const blank = { name: "", sku: "", hsnCode: "", category: "Engine", brand: "", vehicles: "", buyPrice: "", sellPrice: "", mrp: "", stock: "", minStock: "10", maxStock: "1000", reorderQty: "20", location: "", supplier: "", image: "📦", gstRate: "18", trackBatch: false, batchNumber: "", expiryDate: "", notes: "", oemNumber: "", position: "", engineType: "", transmission: "", condition: "New", warranty: "", globalSku: null };
     const [f, setF] = useState(blank);
@@ -57,6 +57,14 @@ export function ProductModal({ open, onClose, product, onSave, toast, activeShop
 
     const handleSave = async () => {
         if (!validate()) return;
+        // Duplicate SKU guard
+        const skuConflict = (products || []).some(
+            p => p.sku && p.sku.toLowerCase() === f.sku.toLowerCase() && p.id !== product?.id
+        );
+        if (skuConflict) {
+            setErrors(e => ({ ...e, sku: "SKU already exists. Use a unique SKU." }));
+            return;
+        }
         setSaving(true);
         await new Promise(r => setTimeout(r, 200));
         onSave({ ...f, id: product?.id || "p" + uid(), shopId: product?.shopId || activeShopId, buyPrice: +f.buyPrice, sellPrice: +f.sellPrice, mrp: +f.mrp || null, stock: +f.stock, minStock: +f.minStock || 10, maxStock: +f.maxStock || 1000, reorderQty: +f.reorderQty || 20, gstRate: +f.gstRate || 18, hsnCode: f.hsnCode || "", trackBatch: !!f.trackBatch, batchNumber: f.batchNumber || "", expiryDate: f.expiryDate || "", oemNumber: f.oemNumber || "", position: f.position || "", engineType: f.engineType || "", transmission: f.transmission || "", condition: f.condition || "New", warranty: f.warranty || "", globalSku: f.globalSku });
@@ -114,7 +122,7 @@ export function ProductModal({ open, onClose, product, onSave, toast, activeShop
                 )}
             </div>
 
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
+            <div className="inner-grid-2" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
                 <div style={{ gridColumn: "span 2" }}><Field label="Product Name" required error={errors.name}><Input value={f.name} onChange={set("name")} placeholder="Bosch Brake Pad Set — Front" /></Field></div>
                 <Field label="SKU / Code" required error={errors.sku}><Input value={f.sku} onChange={set("sku")} placeholder="BRK-F-0042" /></Field>
                 <Field label="HSN / SAC Code" hint="For GST filing"><Input value={f.hsnCode} onChange={set("hsnCode")} placeholder="87083000" /></Field>
@@ -146,14 +154,14 @@ export function ProductModal({ open, onClose, product, onSave, toast, activeShop
                 <Field label="GST Rate"><Select value={String(f.gstRate)} onChange={set("gstRate")} options={["0", "5", "12", "18", "28"].map(v => ({ value: v, label: v + "% GST" }))} /></Field>
 
                 {profit !== null && (
-                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+                    <div style={{ gridColumn: "span 2", display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
                         <div style={{ background: profit > 0 ? T.emeraldBg : T.crimsonBg, borderRadius: 10, padding: "10px 14px", textAlign: "center" }}>
                             <div style={{ fontSize: 11, color: profit > 0 ? T.emerald : T.crimson, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.06em" }}>Profit/Unit</div>
-                            <div style={{ fontSize: 22, fontWeight: 800, color: profit > 0 ? T.emerald : T.crimson, fontFamily: FONT.mono }}>{fmt(profit)}</div>
+                            <div style={{ fontSize: 18, fontWeight: 800, color: profit > 0 ? T.emerald : T.crimson, fontFamily: FONT.mono }}>{fmt(profit)}</div>
                         </div>
                         <div style={{ background: T.amberGlow, borderRadius: 10, padding: "10px 14px", textAlign: "center" }}>
                             <div style={{ fontSize: 11, color: T.amber, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.06em" }}>Margin</div>
-                            <div style={{ fontSize: 22, fontWeight: 800, color: T.amber, fontFamily: FONT.mono }}>{mg}%</div>
+                            <div style={{ fontSize: 18, fontWeight: 800, color: T.amber, fontFamily: FONT.mono }}>{mg}%</div>
                         </div>
                     </div>
                 )}

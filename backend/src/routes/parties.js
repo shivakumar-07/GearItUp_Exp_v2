@@ -71,12 +71,46 @@ router.post('/:id/payment', authenticate, requireShopOwner, async (req, res, nex
     const party = await prisma.party.findUnique({ where: { partyId: req.params.id } });
     if (!party || party.shopId !== req.shopId) return res.status(404).json({ error: 'Party not found' });
 
-    await prisma.party.update({
-      where: { partyId: req.params.id },
-      data: { outstanding: { decrement: parseFloat(amount) } },
+    const parsedAmount = parseFloat(amount);
+    if (isNaN(parsedAmount) || parsedAmount <= 0) {
+      return res.status(400).json({ error: 'Amount must be a positive number' });
+    }
+
+    // Use a transaction: update outstanding + create a RECEIPT movement for the audit trail
+    let updatedParty;
+    await prisma.$transaction(async (tx) => {
+      updatedParty = await tx.party.update({
+        where: { partyId: req.params.id },
+        data: { outstanding: { decrement: parsedAmount } },
+      });
+
+      // Find any inventory item from this shop to satisfy the FK on movement.inventoryId.
+      // RECEIPT movements are financial-only — they carry no stock change.
+      // We attach them to the first available inventory row for the shop so referential
+      // integrity is maintained without requiring a nullable inventoryId in the schema.
+      const anyInv = await tx.shopInventory.findFirst({ where: { shopId: req.shopId } });
+      if (anyInv) {
+        await tx.movement.create({
+          data: {
+            shopId: req.shopId,
+            inventoryId: anyInv.inventoryId,
+            type: 'RECEIPT',
+            qty: 0,
+            totalAmount: parsedAmount,
+            partyId: req.params.id,
+            notes: [
+              `Payment from ${party.name} via ${mode}`,
+              reference && `Ref: ${reference}`,
+              notes,
+            ].filter(Boolean).join(' · '),
+          },
+        });
+      }
     });
 
-    res.json({ success: true, newOutstanding: Number(party.outstanding) - parseFloat(amount) });
+    // Use the updated value from the transaction result, not the stale snapshot
+    const newOutstanding = Number(updatedParty.outstanding);
+    res.json({ success: true, newOutstanding });
   } catch (err) {
     next(err);
   }

@@ -2,6 +2,7 @@ import { useState, useMemo, useEffect } from "react";
 import { T, FONT } from "../theme";
 import { fmt, fmtDate, daysAgo, uid, downloadCSV, generateCSV } from "../utils";
 import { Btn, Input, Select, Modal, Field, Divider } from "../components/ui";
+import { MANUFACTURERS, getModelsForMfg } from "../vehicleData";
 
 export function PartiesPage({ parties, movements, vehicles, activeShopId, onSaveParty, onSaveVehicle, toast }) {
     const [view, setView] = useState("customers");
@@ -9,6 +10,42 @@ export function PartiesPage({ parties, movements, vehicles, activeShopId, onSave
     const [editParty, setEditParty] = useState(null);
     const [showAddModal, setShowAddModal] = useState(false);
     const [expandedId, setExpandedId] = useState(null);
+
+    // Add Vehicle inline form state
+    const [showVehForm, setShowVehForm] = useState(false);
+    const blankVeh = { make: "", model: "", year: "", fuelType: "Petrol", registrationNumber: "", ownerId: "", engineType: "", odometer: "" };
+    const [vehForm, setVehForm] = useState(blankVeh);
+    const setVF = k => v => setVehForm(p => ({ ...p, [k]: v }));
+    const vehModels = useMemo(() => vehForm.make ? getModelsForMfg(vehForm.make) : [], [vehForm.make]);
+    const currentYear = new Date().getFullYear();
+    const yearOpts = Array.from({ length: 30 }, (_, i) => currentYear - i);
+
+    const handleSaveVehicle = () => {
+        if (!vehForm.make || !vehForm.model || !vehForm.registrationNumber) {
+            toast?.("Make, model and registration number are required", "error");
+            return;
+        }
+        const vehicle = {
+            id: "veh_" + uid(),
+            shopId: activeShopId,
+            make: vehForm.make,
+            model: vehForm.model,
+            variant: "",
+            year: +vehForm.year || currentYear,
+            fuelType: vehForm.fuelType || "Petrol",
+            engineType: vehForm.engineType || "",
+            registrationNumber: vehForm.registrationNumber.toUpperCase(),
+            odometer: +vehForm.odometer || 0,
+            vin: "",
+            ownerId: vehForm.ownerId || "",
+            notes: "",
+            createdAt: Date.now(),
+        };
+        onSaveVehicle?.(vehicle);
+        toast?.(`Vehicle ${vehicle.registrationNumber} added!`, "success", "🚗");
+        setVehForm(blankVeh);
+        setShowVehForm(false);
+    };
 
     const shopParties = useMemo(() => (parties || []).filter(p => p.shopId === activeShopId), [parties, activeShopId]);
     const shopVehicles = useMemo(() => (vehicles || []).filter(v => v.shopId === activeShopId), [vehicles, activeShopId]);
@@ -44,7 +81,31 @@ export function PartiesPage({ parties, movements, vehicles, activeShopId, onSave
         ).length;
     };
 
+    // Credit aging: days since oldest unpaid credit transaction
+    const getCreditAge = (party) => {
+        const creditMoves = shopMovements.filter(m => {
+            const matchesParty = m.customerName === party.name || m.supplierName === party.name || m.supplier === party.name;
+            return matchesParty && (m.paymentStatus === "pending" || m.paymentMode === "Credit") && (m.type === "SALE" || m.type === "PURCHASE");
+        }).sort((a, b) => a.date - b.date);
+        if (creditMoves.length === 0) return 0;
+        return Math.floor((Date.now() - creditMoves[0].date) / 86400000);
+    };
+
     const totalOutstanding = filtered.reduce((s, p) => s + getBalance(p), 0);
+
+    const agingBuckets = useMemo(() => {
+        const buckets = { d30: 0, d60: 0, d60plus: 0 };
+        filtered.forEach(p => {
+            const age = getCreditAge(p);
+            const bal = getBalance(p);
+            if (bal <= 0) return;
+            if (age <= 30) buckets.d30 += bal;
+            else if (age <= 60) buckets.d60 += bal;
+            else buckets.d60plus += bal;
+        });
+        return buckets;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [filtered, shopMovements]);
 
     const stats = {
         total: filtered.length,
@@ -82,7 +143,85 @@ export function PartiesPage({ parties, movements, vehicles, activeShopId, onSave
             {/* Vehicles Tab */}
             {view === "vehicles" && (
                 <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-                    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(340px, 1fr))", gap: 14 }}>
+                    {/* Toolbar */}
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                        <div style={{ fontSize: 13, color: T.t3 }}>
+                            <span style={{ fontWeight: 700, color: T.t1 }}>{shopVehicles.length}</span> vehicles registered
+                        </div>
+                        <Btn size="sm" onClick={() => setShowVehForm(v => !v)}>
+                            {showVehForm ? "✕ Cancel" : "＋ Add Vehicle"}
+                        </Btn>
+                    </div>
+
+                    {/* Inline Add Vehicle Form */}
+                    {showVehForm && (
+                        <div style={{ background: T.card, border: `1px solid ${T.amber}44`, borderRadius: 14, padding: 20, animation: "fadeUp 0.2s ease" }}>
+                            <div style={{ fontSize: 12, fontWeight: 800, color: T.amber, textTransform: "uppercase", letterSpacing: "1.5px", marginBottom: 14 }}>New Vehicle</div>
+                            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(180px, 1fr))", gap: 12, alignItems: "end" }}>
+                                {/* Make */}
+                                <Field label="Make *">
+                                    <select value={vehForm.make} onChange={e => setVF("make")(e.target.value)}
+                                        style={{ width: "100%", background: T.surface, border: `1px solid ${vehForm.make ? T.amber + "66" : T.border}`, borderRadius: 8, padding: "9px 12px", color: vehForm.make ? T.t1 : T.t3, fontSize: 13, fontFamily: FONT.ui, outline: "none", cursor: "pointer" }}>
+                                        <option value="">Select make…</option>
+                                        {MANUFACTURERS.map(m => <option key={m.id} value={m.id}>{m.logo} {m.name}</option>)}
+                                    </select>
+                                </Field>
+                                {/* Model */}
+                                <Field label="Model *">
+                                    <select value={vehForm.model} onChange={e => setVF("model")(e.target.value)}
+                                        style={{ width: "100%", background: T.surface, border: `1px solid ${vehForm.model ? T.amber + "66" : T.border}`, borderRadius: 8, padding: "9px 12px", color: vehForm.model ? T.t1 : T.t3, fontSize: 13, fontFamily: FONT.ui, outline: "none", cursor: "pointer" }}
+                                        disabled={!vehForm.make}>
+                                        <option value="">Select model…</option>
+                                        {vehModels.map(m => <option key={m.id} value={m.id}>{m.name}</option>)}
+                                    </select>
+                                </Field>
+                                {/* Year */}
+                                <Field label="Year">
+                                    <select value={vehForm.year} onChange={e => setVF("year")(e.target.value)}
+                                        style={{ width: "100%", background: T.surface, border: `1px solid ${T.border}`, borderRadius: 8, padding: "9px 12px", color: T.t1, fontSize: 13, fontFamily: FONT.ui, outline: "none", cursor: "pointer" }}>
+                                        <option value="">Year</option>
+                                        {yearOpts.map(y => <option key={y} value={y}>{y}</option>)}
+                                    </select>
+                                </Field>
+                                {/* Fuel */}
+                                <Field label="Fuel Type">
+                                    <select value={vehForm.fuelType} onChange={e => setVF("fuelType")(e.target.value)}
+                                        style={{ width: "100%", background: T.surface, border: `1px solid ${T.border}`, borderRadius: 8, padding: "9px 12px", color: T.t1, fontSize: 13, fontFamily: FONT.ui, outline: "none", cursor: "pointer" }}>
+                                        {["Petrol", "Diesel", "CNG", "Electric", "Hybrid"].map(f => <option key={f}>{f}</option>)}
+                                    </select>
+                                </Field>
+                                {/* Reg Number */}
+                                <Field label="Reg. Number *">
+                                    <Input value={vehForm.registrationNumber} onChange={setVF("registrationNumber")} placeholder="TS09AB1234" />
+                                </Field>
+                                {/* Owner */}
+                                <Field label="Owner">
+                                    <select value={vehForm.ownerId} onChange={e => setVF("ownerId")(e.target.value)}
+                                        style={{ width: "100%", background: T.surface, border: `1px solid ${T.border}`, borderRadius: 8, padding: "9px 12px", color: T.t1, fontSize: 13, fontFamily: FONT.ui, outline: "none", cursor: "pointer" }}>
+                                        <option value="">No owner</option>
+                                        {shopParties.filter(p => p.type === "customer" || p.type === "both").map(p => (
+                                            <option key={p.id} value={p.id}>{p.name}</option>
+                                        ))}
+                                    </select>
+                                </Field>
+                                {/* Engine */}
+                                <Field label="Engine Type">
+                                    <Input value={vehForm.engineType} onChange={setVF("engineType")} placeholder="1.2L VTEC" />
+                                </Field>
+                                {/* Odometer */}
+                                <Field label="Odometer (km)">
+                                    <Input type="number" value={vehForm.odometer} onChange={setVF("odometer")} placeholder="45000" suffix="km" />
+                                </Field>
+                            </div>
+                            <div style={{ display: "flex", justifyContent: "flex-end", gap: 10, marginTop: 16, paddingTop: 14, borderTop: `1px solid ${T.border}` }}>
+                                <Btn variant="ghost" size="sm" onClick={() => { setVehForm(blankVeh); setShowVehForm(false); }}>Cancel</Btn>
+                                <Btn size="sm" onClick={handleSaveVehicle}>🚗 Save Vehicle</Btn>
+                            </div>
+                        </div>
+                    )}
+
+                    {/* Vehicle Cards Grid */}
+                    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(min(280px, 100%), 1fr))", gap: 14 }}>
                         {shopVehicles.map(v => {
                             const owner = shopParties.find(p => p.id === v.ownerId);
                             return (
@@ -95,17 +234,24 @@ export function PartiesPage({ parties, movements, vehicles, activeShopId, onSave
                                         <span style={{ background: T.skyBg, color: T.sky, padding: "4px 10px", borderRadius: 6, fontWeight: 800, fontFamily: FONT.mono, fontSize: 13 }}>{v.registrationNumber}</span>
                                     </div>
                                     <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, fontSize: 12 }}>
-                                        <div><span style={{ color: T.t3 }}>Owner:</span> <span style={{ color: T.t1, fontWeight: 600 }}>{owner?.name || "Unknown"}</span></div>
-                                        <div><span style={{ color: T.t3 }}>Engine:</span> <span style={{ color: T.t2 }}>{v.engineType}</span></div>
+                                        <div><span style={{ color: T.t3 }}>Owner:</span> <span style={{ color: T.t1, fontWeight: 600 }}>{owner?.name || "—"}</span></div>
+                                        <div><span style={{ color: T.t3 }}>Engine:</span> <span style={{ color: T.t2 }}>{v.engineType || "—"}</span></div>
                                         <div><span style={{ color: T.t3 }}>Odometer:</span> <span style={{ color: T.amber, fontWeight: 700, fontFamily: FONT.mono }}>{(v.odometer || 0).toLocaleString()} km</span></div>
-                                        <div><span style={{ color: T.t3 }}>VIN:</span> <span style={{ color: T.t2, fontFamily: FONT.mono, fontSize: 10 }}>{v.vin}</span></div>
+                                        <div><span style={{ color: T.t3 }}>VIN:</span> <span style={{ color: T.t2, fontFamily: FONT.mono, fontSize: 10 }}>{v.vin || "—"}</span></div>
                                     </div>
                                     {v.notes && <div style={{ marginTop: 10, padding: "8px 12px", background: `${T.amber}0A`, borderRadius: 8, fontSize: 11, color: T.t3 }}>📝 {v.notes}</div>}
                                 </div>
                             );
                         })}
                     </div>
-                    {shopVehicles.length === 0 && <div style={{ textAlign: "center", padding: 48, color: T.t3 }}>No vehicles registered. Vehicles are added via Job Cards.</div>}
+                    {shopVehicles.length === 0 && !showVehForm && (
+                        <div style={{ textAlign: "center", padding: 48 }}>
+                            <div style={{ fontSize: 48, opacity: 0.3, marginBottom: 12 }}>🚗</div>
+                            <div style={{ fontSize: 16, fontWeight: 700, color: T.t2, marginBottom: 6 }}>No vehicles registered yet</div>
+                            <div style={{ fontSize: 13, color: T.t3, marginBottom: 20 }}>Add a vehicle to track service history and compatible parts</div>
+                            <Btn size="sm" onClick={() => setShowVehForm(true)}>＋ Add First Vehicle</Btn>
+                        </div>
+                    )}
                 </div>
             )}
 
@@ -113,7 +259,7 @@ export function PartiesPage({ parties, movements, vehicles, activeShopId, onSave
             {view !== "vehicles" && (
                 <>
                     {/* Stats Bar */}
-                    <div style={{ display: "flex", gap: 12 }}>
+                    <div className="stats-flex" style={{ display: "flex", gap: 12 }}>
                         <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: 12, padding: "12px 20px", flex: 1 }}>
                             <div style={{ fontSize: 10, color: T.t3, fontWeight: 600, textTransform: "uppercase" }}>Total {view}</div>
                             <div style={{ fontSize: 24, fontWeight: 900, color: T.t1, fontFamily: FONT.mono }}>{stats.total}</div>
@@ -128,6 +274,27 @@ export function PartiesPage({ parties, movements, vehicles, activeShopId, onSave
                         </div>
                     </div>
 
+                    {/* Credit Aging Summary */}
+                    {(agingBuckets.d30 > 0 || agingBuckets.d60 > 0 || agingBuckets.d60plus > 0) && (
+                        <div className="aging-grid-3" style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10 }}>
+                            <div style={{ background: T.card, border: `1px solid ${T.emeraldDim}`, borderRadius: 10, padding: "10px 16px" }}>
+                                <div style={{ fontSize: 10, color: T.t3, fontWeight: 600, textTransform: "uppercase", marginBottom: 4 }}>0–30 Days</div>
+                                <div style={{ fontSize: 20, fontWeight: 900, color: T.emerald, fontFamily: FONT.mono }}>{fmt(agingBuckets.d30)}</div>
+                                <div style={{ fontSize: 10, color: T.t3, marginTop: 2 }}>Recent credit</div>
+                            </div>
+                            <div style={{ background: T.card, border: `1px solid ${T.amberDim}`, borderRadius: 10, padding: "10px 16px" }}>
+                                <div style={{ fontSize: 10, color: T.t3, fontWeight: 600, textTransform: "uppercase", marginBottom: 4 }}>31–60 Days</div>
+                                <div style={{ fontSize: 20, fontWeight: 900, color: T.amber, fontFamily: FONT.mono }}>{fmt(agingBuckets.d60)}</div>
+                                <div style={{ fontSize: 10, color: T.t3, marginTop: 2 }}>Follow up needed</div>
+                            </div>
+                            <div style={{ background: T.card, border: `1px solid ${T.crimsonDim}`, borderRadius: 10, padding: "10px 16px" }}>
+                                <div style={{ fontSize: 10, color: T.t3, fontWeight: 600, textTransform: "uppercase", marginBottom: 4 }}>60+ Days</div>
+                                <div style={{ fontSize: 20, fontWeight: 900, color: T.crimson, fontFamily: FONT.mono }}>{fmt(agingBuckets.d60plus)}</div>
+                                <div style={{ fontSize: 10, color: T.t3, marginTop: 2 }}>Overdue — urgent</div>
+                            </div>
+                        </div>
+                    )}
+
                     {/* Toolbar */}
                     <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
                         <div style={{ flex: 1 }}><Input value={search} onChange={setSearch} placeholder={`Search ${view}…`} icon="🔍" /></div>
@@ -137,6 +304,7 @@ export function PartiesPage({ parties, movements, vehicles, activeShopId, onSave
 
                     {/* Table */}
                     <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: 14, overflow: "hidden" }}>
+                      <div className="table-scroll">
                         <table style={{ width: "100%", borderCollapse: "collapse" }}>
                             <thead>
                                 <tr style={{ background: T.surface, borderBottom: `1px solid ${T.border}` }}>
@@ -158,12 +326,51 @@ export function PartiesPage({ parties, movements, vehicles, activeShopId, onSave
                                                 <td style={{ padding: "12px 14px" }}>
                                                     <div style={{ fontWeight: 700, color: T.t1, fontSize: 13 }}>{p.name}</div>
                                                     {p.email && <div style={{ fontSize: 10, color: T.t3, marginTop: 2 }}>{p.email}</div>}
+                                                    {/* Credit aging badge */}
+                                                    {bal > 0 && (() => {
+                                                        const age = getCreditAge(p);
+                                                        if (age <= 0) return null;
+                                                        const color = age > 60 ? T.crimson : age > 30 ? T.amber : T.emerald;
+                                                        return <span style={{ fontSize: 9, fontWeight: 700, color, background: `${color}22`, padding: "1px 6px", borderRadius: 4, marginTop: 3, display: "inline-block" }}>{age}d overdue</span>;
+                                                    })()}
+                                                    {/* Mini balance bar */}
+                                                    {(() => {
+                                                        const limit = p.creditLimit || 0;
+                                                        const pct = limit > 0 ? Math.min(100, (bal / limit) * 100) : 0;
+                                                        if (bal <= 0) return null;
+                                                        return (
+                                                            <div style={{ marginTop: 6 }}>
+                                                                <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 3 }}>
+                                                                    <span style={{ fontSize: 11, color: T.t3 }}>Credit used</span>
+                                                                    <span style={{ fontSize: 11, fontFamily: FONT.mono, color: T.amber }}>{fmt(bal)}{limit > 0 ? ` / ${fmt(limit)}` : ""}</span>
+                                                                </div>
+                                                                {limit > 0 && (
+                                                                    <div style={{ height: 4, background: T.border, borderRadius: 2 }}>
+                                                                        <div style={{ height: "100%", borderRadius: 2, background: pct > 80 ? T.crimson : pct > 50 ? T.amber : T.emerald, width: `${pct}%`, transition: "width 0.3s" }} />
+                                                                    </div>
+                                                                )}
+                                                            </div>
+                                                        );
+                                                    })()}
                                                 </td>
                                                 <td style={{ padding: "12px 14px", fontFamily: FONT.mono, fontSize: 12, color: T.t2 }}>{p.phone}</td>
                                                 <td style={{ padding: "12px 14px", fontFamily: FONT.mono, fontSize: 11, color: p.gstin ? T.t2 : T.t4 }}>{p.gstin || "—"}</td>
                                                 <td style={{ padding: "12px 14px", fontSize: 12, color: T.t2 }}>{p.city || "—"}</td>
                                                 <td style={{ padding: "12px 14px", fontFamily: FONT.mono, fontSize: 12, color: T.t2 }}>{fmt(p.creditLimit)}</td>
-                                                <td style={{ padding: "12px 14px", fontFamily: FONT.mono, fontSize: 14, fontWeight: 800, color: bal > 0 ? T.crimson : T.emerald }}>{bal > 0 ? fmt(bal) : "—"}</td>
+                                                <td style={{ padding: "12px 14px", fontFamily: FONT.mono, fontSize: 14, fontWeight: 800, color: bal > 0 ? T.crimson : T.emerald }}>
+                                            {bal > 0 ? fmt(bal) : "—"}
+                                            {/* Credit limit usage bar */}
+                                            {bal > 0 && p.creditLimit > 0 && (
+                                                <div style={{ marginTop: 4, height: 3, borderRadius: 2, background: T.border, width: "100%" }}>
+                                                    <div style={{
+                                                        height: "100%", borderRadius: 2,
+                                                        width: `${Math.min(100, (bal / p.creditLimit) * 100)}%`,
+                                                        background: bal > p.creditLimit ? T.crimson : bal > p.creditLimit * 0.8 ? T.amber : T.emerald,
+                                                        transition: "width 0.3s ease",
+                                                    }} />
+                                                </div>
+                                            )}
+                                        </td>
                                                 <td style={{ padding: "12px 14px", fontFamily: FONT.mono, fontSize: 12, color: T.t2 }}>{txns}</td>
                                                 <td style={{ padding: "12px 14px" }}>
                                                     <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
@@ -173,7 +380,17 @@ export function PartiesPage({ parties, movements, vehicles, activeShopId, onSave
                                                     </div>
                                                 </td>
                                                 <td style={{ padding: "12px 14px" }}>
-                                                    <Btn size="xs" variant="subtle" onClick={(e) => { e.stopPropagation(); setEditParty(p); setShowAddModal(true); }}>Edit</Btn>
+                                                    <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
+                                                        <Btn size="xs" variant="subtle" onClick={(e) => { e.stopPropagation(); setEditParty(p); setShowAddModal(true); }}>Edit</Btn>
+                                                        {bal > 0 && p.phone && (
+                                                            <Btn size="xs" variant="emerald" onClick={(e) => {
+                                                                e.stopPropagation();
+                                                                const msg = `Namaste ${p.name}, aapka hamare shop mein ₹${fmt(bal)} ka baki hai. Kripya jald payment karein. Dhanyawaad.`;
+                                                                window.open(`https://wa.me/91${(p.phone || "").replace(/\D/g, "")}?text=${encodeURIComponent(msg)}`, "_blank");
+                                                                toast?.("WhatsApp reminder opened", "success");
+                                                            }}>WhatsApp</Btn>
+                                                        )}
+                                                    </div>
                                                 </td>
                                             </tr>
                                             {isExpanded && (
@@ -182,18 +399,40 @@ export function PartiesPage({ parties, movements, vehicles, activeShopId, onSave
                                                         <div style={{ fontSize: 12, fontWeight: 800, color: T.t1, marginBottom: 8, marginTop: 8 }}>Recent Transactions</div>
                                                         {getPartyLedger(p).length === 0 ? (
                                                             <div style={{ color: T.t3, fontSize: 12 }}>No transactions yet.</div>
-                                                        ) : (
-                                                            <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-                                                                {getPartyLedger(p).map(m => (
-                                                                    <div key={m.id} style={{ display: "flex", justifyContent: "space-between", padding: "6px 10px", background: T.card, borderRadius: 6, fontSize: 11 }}>
-                                                                        <span style={{ color: T.t3 }}>{fmtDate(m.date)} · {m.type}</span>
-                                                                        <span style={{ color: T.t2 }}>{m.productName}</span>
-                                                                        <span style={{ fontFamily: FONT.mono, fontWeight: 700, color: m.type === "SALE" || m.type === "PURCHASE" ? T.amber : T.emerald }}>{fmt(m.total)}</span>
-                                                                        <span style={{ color: m.paymentStatus === "paid" ? T.emerald : T.crimson, fontWeight: 600, fontSize: 10 }}>{m.paymentStatus}</span>
-                                                                    </div>
-                                                                ))}
-                                                            </div>
-                                                        )}
+                                                        ) : (() => {
+                                                            // Compute running balance (oldest → newest, then reverse for display)
+                                                            let running = p.openingBalance || 0;
+                                                            const ledgerWithBalance = getPartyLedger(p).slice().reverse().map(m => {
+                                                                if (m.type === "SALE" && (m.paymentStatus === "pending" || m.paymentMode === "Credit")) running += m.total;
+                                                                else if (m.type === "RECEIPT") running -= m.total;
+                                                                else if (m.type === "PURCHASE" && (m.paymentStatus === "pending" || m.paymentMode === "Credit")) running += m.total;
+                                                                else if (m.type === "PAYMENT") running -= m.total;
+                                                                return { ...m, runningBal: running };
+                                                            }).reverse();
+                                                            return (
+                                                                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 11 }}>
+                                                                    <thead>
+                                                                        <tr style={{ borderBottom: `1px solid ${T.border}` }}>
+                                                                            {["Date", "Type", "Product", "Amount", "Status", "Balance"].map(h => (
+                                                                                <th key={h} style={{ padding: "5px 8px", textAlign: "left", color: T.t4, fontWeight: 600, fontSize: 10, textTransform: "uppercase", letterSpacing: "0.06em", fontFamily: FONT.ui }}>{h}</th>
+                                                                            ))}
+                                                                        </tr>
+                                                                    </thead>
+                                                                    <tbody>
+                                                                        {ledgerWithBalance.map(m => (
+                                                                            <tr key={m.id} style={{ borderBottom: `1px solid ${T.border}` }}>
+                                                                                <td style={{ padding: "6px 8px", color: T.t3 }}>{fmtDate(m.date)}</td>
+                                                                                <td style={{ padding: "6px 8px", color: T.t2, fontWeight: 600 }}>{m.type}</td>
+                                                                                <td style={{ padding: "6px 8px", color: T.t2 }}>{m.productName || "—"}</td>
+                                                                                <td style={{ padding: "6px 8px", fontFamily: FONT.mono, fontWeight: 700, color: m.type === "SALE" || m.type === "PURCHASE" ? T.amber : T.emerald }}>{fmt(m.total)}</td>
+                                                                                <td style={{ padding: "6px 8px", color: m.paymentStatus === "paid" || m.paymentStatus === "completed" ? T.emerald : T.crimson, fontWeight: 600, fontSize: 10 }}>{m.paymentStatus || "—"}</td>
+                                                                                <td style={{ padding: "6px 8px", fontFamily: FONT.mono, fontWeight: 700, color: T.amber }}>{fmt(m.runningBal)}</td>
+                                                                            </tr>
+                                                                        ))}
+                                                                    </tbody>
+                                                                </table>
+                                                            );
+                                                        })()}
                                                         {p.notes && <div style={{ marginTop: 8, padding: "6px 10px", background: `${T.amber}08`, borderRadius: 6, fontSize: 11, color: T.t3 }}>📝 {p.notes}</div>}
                                                     </td>
                                                 </tr>
@@ -203,6 +442,7 @@ export function PartiesPage({ parties, movements, vehicles, activeShopId, onSave
                                 })}
                             </tbody>
                         </table>
+                      </div>
                     </div>
                 </>
             )}

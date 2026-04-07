@@ -178,4 +178,152 @@ export const GLOBAL_CSS = `
   /* Subtle ambient float */
   .float { animation: float 4s ease-in-out infinite; }
   .glow-pulse { animation: glowPulse 3s ease-in-out infinite; }
+
+  /* ── New keyframes ── */
+  @keyframes slideInRight { from { opacity:0; transform:translateX(100%); } to { opacity:1; transform:translateX(0); } }
+  @keyframes slideInLeft  { from { opacity:0; transform:translateX(-100%); } to { opacity:1; transform:translateX(0); } }
+  @keyframes countUp      { from { opacity:0; transform:translateY(8px); } to { opacity:1; transform:none; } }
+
+  /* ── Utility classes ── */
+  .spin-ring {
+    width: 16px; height: 16px;
+    border: 2px solid transparent;
+    border-top-color: ${T.amber};
+    border-radius: 50%;
+    animation: spin 0.7s linear infinite;
+    display: inline-block;
+  }
+  .press-feedback { transition: transform 0.1s ease; }
+  .press-feedback:active { transform: scale(0.97) translateY(1px) !important; }
+
+  /* ── Print styles (POS invoice) ── */
+  @media print {
+    body { background: #fff !important; color: #000 !important; }
+    /* Hide non-printable chrome */
+    nav, [data-print-hide], .toast-in,
+    [style*="position: fixed"] { display: none !important; }
+    /* Make content fill page */
+    [data-print-area] {
+      position: absolute !important; left: 0 !important; top: 0 !important;
+      width: 100% !important; padding: 20px !important;
+      background: #fff !important; color: #000 !important;
+    }
+    [data-print-area] * { color: #000 !important; border-color: #ccc !important; }
+    [data-print-area] table { width: 100% !important; }
+  }
+
+  /* ── Command palette overlay ── */
+  .cmd-backdrop {
+    position: fixed; inset: 0; z-index: 9990;
+    background: rgba(0,0,0,0.6);
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+    animation: fadeIn 0.12s ease both;
+  }
+  .cmd-box {
+    position: fixed; top: 18%; left: 50%;
+    transform: translateX(-50%);
+    width: 540px; max-width: 92vw;
+    z-index: 9991;
+    animation: scaleIn 0.15s cubic-bezier(0.16,1,0.3,1) both;
+  }
+
+  /* ═══════ RESPONSIVE DESIGN ═══════ */
+
+  /* ── Tablet & Mobile (≤768px): Sidebar → Bottom Nav ── */
+  @media (max-width: 768px) {
+    .erp-sidebar, .mp-sidebar, .admin-sidebar {
+      top: auto !important; bottom: 0 !important;
+      left: 0 !important; right: 0 !important;
+      width: 100% !important; height: 62px !important;
+      flex-direction: row !important;
+      border-right: none !important;
+      border-top: 1px solid rgba(42,59,89,0.95) !important;
+      padding: 4px 6px 2px !important;
+      justify-content: space-around !important;
+      align-items: flex-start !important;
+      gap: 0 !important;
+      overflow: hidden !important;
+    }
+    .sidebar-brand { display: none !important; }
+    .sidebar-spacer { display: none !important; }
+    .erp-sidebar button, .mp-sidebar button {
+      width: auto !important; flex: 1 !important;
+      max-width: 76px !important; height: 50px !important;
+      padding: 4px 2px !important; border-radius: 8px !important;
+    }
+    .erp-topbar { padding-left: 14px !important; padding-right: 14px !important; }
+    .erp-content { padding: 16px 14px 80px 14px !important; }
+    .erp-banner { padding: 8px 14px !important; }
+    .mp-content { padding-left: 0 !important; }
+
+    /* Grid helpers */
+    .kpi-grid-6 { grid-template-columns: repeat(2, 1fr) !important; }
+    .grid-2col, .bottom-grid-2, .bill-summary-grid { grid-template-columns: 1fr !important; gap: 16px !important; }
+    .grid-4col, .customer-grid { grid-template-columns: repeat(2, 1fr) !important; }
+    .grid-3col, .aging-grid-3 { grid-template-columns: repeat(2, 1fr) !important; }
+    .checkout-grid { grid-template-columns: 1fr !important; gap: 20px !important; }
+    .inner-grid-2, .detail-grid-4 { grid-template-columns: repeat(2, 1fr) !important; }
+
+    /* Table horizontal scroll */
+    .table-scroll { overflow-x: auto !important; -webkit-overflow-scrolling: touch; }
+
+    /* Marketplace nav responsive */
+    .mp-nav-inner { flex-wrap: wrap !important; gap: 10px !important; padding: 12px 14px !important; }
+    .mp-search-row { flex: none !important; width: 100% !important; order: 2; }
+    .mp-nav-logo { order: 1; }
+    .mp-nav-right { order: 3; flex-wrap: wrap !important; gap: 8px !important; }
+    .veh-selector-text { display: none !important; }
+
+    /* Hero banner: stack vertically */
+    .hero-banner { flex-direction: column !important; min-height: auto !important; }
+    .hero-right { width: 100% !important; border-left: none !important; border-top: 1px solid rgba(42,59,89,0.5) !important; padding: 24px !important; }
+
+    /* Checkout stepper */
+    .step-connector { width: 20px !important; }
+
+    /* Stats flex wrap */
+    .stats-flex { flex-wrap: wrap !important; }
+
+    /* Topbar secondary items: hide on very small */
+    .topbar-secondary { display: none !important; }
+
+    /* Modal padding reduction */
+    .modal-box { padding: 20px !important; }
+  }
+
+  /* ── Small Mobile (≤480px): Extra adjustments ── */
+  @media (max-width: 480px) {
+    .erp-content { padding: 12px 10px 76px 10px !important; }
+    .kpi-grid-6 { gap: 8px !important; }
+    .customer-grid { grid-template-columns: 1fr !important; }
+    .aging-grid-3 { grid-template-columns: 1fr !important; }
+    .grid-4col { grid-template-columns: 1fr 1fr !important; }
+    .inner-grid-2 { grid-template-columns: 1fr !important; }
+    .detail-grid-4 { grid-template-columns: 1fr 1fr !important; }
+    .erp-topbar { padding-left: 10px !important; padding-right: 10px !important; }
+    .mp-nav-inner { padding: 10px !important; }
+    .hero-banner .hero-left { padding: 24px 20px !important; }
+  }
+
+  /* ── Bottom nav clearance for marketplace pages ── */
+  @media (max-width: 768px) {
+    .mp-content > * { padding-bottom: 80px; }
+  }
+
+  /* ── Touch targets: minimum 44px tap area ── */
+  @media (max-width: 768px) {
+    button, [role="button"], a {
+      min-height: 36px;
+    }
+    /* Table action buttons can be smaller - they have adjacent tap targets */
+    table button { min-height: unset; }
+    /* Nav buttons already handled by sidebar CSS */
+    .erp-sidebar button, .mp-sidebar button { min-height: unset; }
+  }
+
+  /* ── Prevent horizontal overflow at page level ── */
+  html, body { overflow-x: hidden; }
+  .erp-content { min-width: 0; }
+  .table-scroll { min-width: 0; }
 `;

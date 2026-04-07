@@ -125,9 +125,18 @@ router.post('/lookup', async (req, res, next) => {
       ...textParts.filter(p => !seen.has(p.masterPartId)),
     ];
 
+    if (parts.length === 0) {
+      return res.status(404).json({
+        found: false,
+        allow_contribution: true,
+        message: 'Part not found',
+        scannedBarcode: term,
+      });
+    }
+
     res.json({
       parts,
-      found: parts.length > 0,
+      found: true,
       exactMatch: arrayParts.length === 1 ? arrayParts[0] : null,
     });
   } catch (err) {
@@ -141,7 +150,11 @@ router.post('/lookup', async (req, res, next) => {
 // VERIFIED parts surface first; no vehicle filter required.
 router.get('/lookup', async (req, res, next) => {
   try {
-    const { q, limit = 12 } = req.query;
+    const { q } = req.query;
+    // Clamp limit: default 12, max 50, guard against NaN
+    const limitRaw = parseInt(req.query.limit);
+    const limit = isNaN(limitRaw) ? 12 : Math.min(Math.max(limitRaw, 1), 50);
+
     if (!q || q.trim().length < 2) {
       return res.status(400).json({ error: 'Query must be at least 2 characters' });
     }
@@ -160,7 +173,7 @@ router.get('/lookup', async (req, res, next) => {
         },
         include: fitmentInclude,
         orderBy: [{ status: 'asc' }, { partName: 'asc' }],
-        take: parseInt(limit),
+        take: limit,
       }),
       arrayLookupIds(term),
     ]);
@@ -177,7 +190,7 @@ router.get('/lookup', async (req, res, next) => {
       });
     }
 
-    const parts = [...textParts, ...arrayParts].slice(0, parseInt(limit));
+    const parts = [...textParts, ...arrayParts].slice(0, limit);
     res.json({ parts, total: parts.length });
   } catch (err) {
     next(err);
@@ -238,7 +251,13 @@ router.get('/barcode/:barcode', async (req, res, next) => {
 // Full-text search with optional vehicle fitment filter.
 router.get('/search', async (req, res, next) => {
   try {
-    const { q, vehicle_id, category, limit = 20, offset = 0 } = req.query;
+    const { q, vehicle_id, category } = req.query;
+    // Sanitise pagination params — guard against NaN from bad query strings
+    const limitRaw  = parseInt(req.query.limit);
+    const offsetRaw = parseInt(req.query.offset);
+    const limit  = isNaN(limitRaw)  ? 20  : Math.min(Math.max(limitRaw,  1), 100);
+    const offset = isNaN(offsetRaw) ? 0   : Math.max(offsetRaw, 0);
+
     if (!q || q.trim().length < 2) {
       return res.status(400).json({ error: 'Query must be at least 2 characters' });
     }
@@ -267,15 +286,15 @@ router.get('/search', async (req, res, next) => {
             include: { vehicle: true },
           },
         },
-        take: parseInt(limit),
-        skip: parseInt(offset),
+        take: limit,
+        skip: offset,
       });
     } else {
       parts = await prisma.masterPart.findMany({
         where: textWhere,
         include: fitmentInclude,
-        take: parseInt(limit),
-        skip: parseInt(offset),
+        take: limit,
+        skip: offset,
       });
     }
 

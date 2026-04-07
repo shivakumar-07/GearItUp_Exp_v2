@@ -14,11 +14,11 @@
  *   global brain (Layer 1) before writing to the per-shop ledger (Layer 3).
  */
 
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { T, FONT } from "../theme";
 import { Modal, Field, Input, Select, Btn } from "./ui";
 import { BarcodeScanner } from "./BarcodeScanner.jsx";
-import { lookupCatalog, lookupByBarcode, addInventory, contributePart } from "../api/inventory.js";
+import { lookupCatalog, lookupByBarcode, scanBarcode, addInventory, contributePart } from "../api/inventory.js";
 import { uid, CATEGORIES, fmt } from "../utils";
 
 // ─── constants ────────────────────────────────────────────────────────────────
@@ -89,8 +89,67 @@ function FitmentPills({ fitments }) {
   );
 }
 
+// ─── ScanButton: tactile amber CTA with press-down feedback ──────────────────
+function ScanButton({ onClick }) {
+  const [active, setActive] = useState(false);
+  return (
+    <button
+      onClick={onClick}
+      onMouseDown={() => setActive(true)}
+      onMouseUp={() => setActive(false)}
+      onMouseLeave={() => setActive(false)}
+      style={{
+        flexShrink: 0,
+        background: `linear-gradient(135deg, ${T.amber}, #D97706)`,
+        border: "none",
+        borderRadius: 10,
+        color: "#000",
+        fontWeight: 800,
+        fontSize: 12,
+        fontFamily: FONT.ui,
+        cursor: "pointer",
+        padding: "0 16px",
+        display: "flex",
+        alignItems: "center",
+        gap: 6,
+        whiteSpace: "nowrap",
+        minHeight: 46,
+        boxShadow: active ? "0 1px 6px rgba(245,158,11,0.2)" : "0 3px 14px rgba(245,158,11,0.35)",
+        transform: active ? "scale(0.97) translateY(1px)" : "scale(1) translateY(0)",
+        transition: "transform 0.1s cubic-bezier(0.16,1,0.3,1), box-shadow 0.1s",
+        willChange: "transform",
+      }}
+    >
+      📷 Scan
+    </button>
+  );
+}
+
+// ─── BackButton: subtle left-arrow nav ───────────────────────────────────────
+function BackButton({ onClick, label = "Back to search" }) {
+  const [hover, setHover] = useState(false);
+  return (
+    <button
+      onClick={onClick}
+      onMouseEnter={() => setHover(true)}
+      onMouseLeave={() => setHover(false)}
+      style={{
+        display: "flex", alignItems: "center", gap: 6,
+        background: "none", border: "none",
+        color: hover ? T.amber : T.t3,
+        cursor: "pointer", fontSize: 12, fontWeight: 600,
+        fontFamily: FONT.ui, marginBottom: 16, padding: "4px 0",
+        transition: "color 0.15s",
+      }}
+    >
+      ← {label}
+    </button>
+  );
+}
+
 // ─── Step 1: Search ────────────────────────────────────────────────────────────
 function SearchStep({ onSelect, onManual, initialQuery }) {
+  // onManual(name, barcode?) — barcode is defined only when called from camera scan not-found
   const [query, setQuery]       = useState(initialQuery || "");
   const [results, setResults]   = useState([]);
   const [loading, setLoading]   = useState(false);
@@ -125,7 +184,7 @@ function SearchStep({ onSelect, onManual, initialQuery }) {
     setQuery(barcode);
     setLoading(true);
     try {
-      const data = await lookupByBarcode(barcode);
+      const data = await scanBarcode(barcode);
       if (data.exactMatch) {
         onSelect(data.exactMatch);
         return;
@@ -133,18 +192,18 @@ function SearchStep({ onSelect, onManual, initialQuery }) {
       if (data.parts && data.parts.length > 0) {
         setResults(data.parts);
         setSearched(true);
-      } else {
-        setResults([]);
-        setSearched(true);
-        // Auto-transition to contribute if nothing found
-        setScanError(`"${barcode}" not found in catalog. Add it manually below.`);
       }
-    } catch {
+    } catch (err) {
+      if (err.status === 404 && err.data?.allow_contribution) {
+        // Part not in catalog — auto-open contribution form with barcode pre-filled
+        onManual("", barcode);
+        return;
+      }
       setScanError("Lookup failed. Check your connection.");
     } finally {
       setLoading(false);
     }
-  }, [onSelect]);
+  }, [onSelect, onManual]);
 
   // ── Keyboard Enter: exact barcode lookup ─────────────────────────────────
   const handleKeyDown = async (e) => {
@@ -182,41 +241,29 @@ function SearchStep({ onSelect, onManual, initialQuery }) {
       />
 
       {/* Header hint */}
-      <div style={{ padding: "12px 16px", background: T.surface, borderRadius: 10, border: `1px solid ${T.border}`, marginBottom: 16 }}>
-        <div style={{ fontSize: 11, fontWeight: 800, color: T.amber, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 4 }}>
-          Step 1 of 2 — Search Global Parts Catalog
-        </div>
-        <div style={{ fontSize: 12, color: T.t3, lineHeight: 1.55 }}>
-          Tap <b style={{ color: T.amber }}>Scan Barcode</b> to use your camera, enter an OEM number, or type the part name.
-          Product details auto-fill from the global catalog — you only enter price &amp; stock.
+      <div style={{
+        padding: "10px 14px",
+        background: T.amberSoft,
+        borderRadius: 10,
+        border: `1px solid ${T.amber}22`,
+        marginBottom: 14,
+        display: "flex", alignItems: "flex-start", gap: 10,
+      }}>
+        <span style={{ fontSize: 14, marginTop: 1, flexShrink: 0 }}>◈</span>
+        <div>
+          <div style={{ fontSize: 10, fontWeight: 800, color: T.amber, textTransform: "uppercase", letterSpacing: "0.07em", marginBottom: 3 }}>
+            Step 1 of 2 — Global Parts Catalog
+          </div>
+          <div style={{ fontSize: 12, color: T.t3, lineHeight: 1.5 }}>
+            Scan a barcode, enter an OEM number, or type the part name.
+            Product details fill automatically — you only enter price &amp; stock.
+          </div>
         </div>
       </div>
 
       {/* Scan button + text input row */}
       <div style={{ display: "flex", gap: 10, marginBottom: 14, alignItems: "stretch" }}>
-        <button
-          onClick={() => { setScanError(""); setScanOpen(true); }}
-          style={{
-            flexShrink: 0,
-            background: `linear-gradient(135deg, ${T.amber}, #D97706)`,
-            border: "none",
-            borderRadius: 10,
-            color: "#000",
-            fontWeight: 800,
-            fontSize: 12,
-            fontFamily: FONT.ui,
-            cursor: "pointer",
-            padding: "0 16px",
-            display: "flex",
-            alignItems: "center",
-            gap: 6,
-            whiteSpace: "nowrap",
-            minHeight: 46,
-            boxShadow: "0 2px 12px rgba(245,158,11,0.35)",
-          }}
-        >
-          📷 Scan
-        </button>
+        <ScanButton onClick={() => { setScanError(""); setScanOpen(true); }} />
 
         {/* Search input */}
         <div style={{ position: "relative", flex: 1 }}>
@@ -225,22 +272,42 @@ function SearchStep({ onSelect, onManual, initialQuery }) {
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             onKeyDown={handleKeyDown}
-            placeholder="OEM number · Part name · Brand  (Enter = exact scan)"
+            placeholder="OEM number · Part name · Brand"
             style={{
               width: "100%", boxSizing: "border-box",
-              background: T.surface,
-              border: `2px solid ${query.length >= 2 ? T.amber + "cc" : T.border}`,
-              borderRadius: 10, padding: "12px 48px 12px 14px",
+              background: T.card,
+              border: `2px solid ${query.length >= 2 ? T.amber + "99" : T.border}`,
+              borderRadius: 10, padding: "11px 44px 11px 14px",
               color: T.t1, fontSize: 13, fontWeight: 600,
               fontFamily: FONT.ui, outline: "none",
-              transition: "border-color 0.15s",
+              transition: "border-color 0.18s, box-shadow 0.18s",
               height: "100%",
+              boxShadow: query.length >= 2 ? `0 0 0 3px ${T.amber}18` : "none",
+            }}
+            onFocus={e => {
+              e.currentTarget.style.borderColor = T.amber + "99";
+              e.currentTarget.style.boxShadow = `0 0 0 3px ${T.amber}18`;
+            }}
+            onBlur={e => {
+              if (query.length < 2) {
+                e.currentTarget.style.borderColor = T.border;
+                e.currentTarget.style.boxShadow = "none";
+              }
             }}
           />
-          {loading && (
-            <span style={{ position: "absolute", right: 14, top: "50%", transform: "translateY(-50%)", fontSize: 11, color: T.t4, fontFamily: FONT.ui }}>
-              …
+          {loading ? (
+            <span style={{
+              position: "absolute", right: 13, top: "50%", transform: "translateY(-50%)",
+              width: 16, height: 16, display: "flex", alignItems: "center", justifyContent: "center",
+            }}>
+              <span style={{
+                width: 14, height: 14, border: `2px solid ${T.border}`,
+                borderTopColor: T.amber, borderRadius: "50%",
+                animation: "spin 0.7s linear infinite", display: "block",
+              }} />
             </span>
+          ) : query.length >= 2 && (
+            <span style={{ position: "absolute", right: 13, top: "50%", transform: "translateY(-50%)", fontSize: 11, color: T.amber, fontWeight: 700, fontFamily: FONT.mono }}>↵</span>
           )}
         </div>
       </div>
@@ -342,20 +409,26 @@ function SearchStep({ onSelect, onManual, initialQuery }) {
 
       {/* Idle hint */}
       {!searched && query.length < 2 && (
-        <div style={{ textAlign: "center", padding: "28px 20px", color: T.t4, fontSize: 12 }}>
-          <div style={{ fontSize: 36, marginBottom: 10 }}>🌐</div>
-          <div style={{ fontWeight: 600, color: T.t3, marginBottom: 4 }}>Global Parts Catalog</div>
-          <div>Bosch · NGK · Denso · TVS · Minda · OEM Genuine parts</div>
-          <div style={{ marginTop: 12, display: "flex", gap: 8, justifyContent: "center", flexWrap: "wrap" }}>
-            <span style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 6, padding: "4px 10px", fontSize: 11, color: T.t3 }}>
-              📷 Tap Scan to use camera
-            </span>
-            <span style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 6, padding: "4px 10px", fontSize: 11, color: T.t3 }}>
-              ⌨️ Type OEM / part name
-            </span>
-            <span style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 6, padding: "4px 10px", fontSize: 11, color: T.t3 }}>
-              ↵ Enter = barcode exact scan
-            </span>
+        <div style={{ padding: "24px 16px", color: T.t4, fontSize: 12 }}>
+          <div style={{ fontSize: 12, fontWeight: 600, color: T.t3, marginBottom: 14, textTransform: "uppercase", letterSpacing: "0.06em" }}>
+            Trusted Brands
+          </div>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 18 }}>
+            {["Bosch", "NGK", "Denso", "TVS", "Minda", "Exide", "MRF", "Amaron"].map(b => (
+              <span key={b} style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 6, padding: "4px 10px", fontSize: 11, color: T.t2, fontWeight: 600 }}>{b}</span>
+            ))}
+          </div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+            {[
+              { icon: "📷", text: "Tap Scan to use camera barcode reader" },
+              { icon: "⌨", text: "Type OEM number or part name above" },
+              { icon: "↵", text: "Press Enter for exact barcode scan" },
+            ].map(h => (
+              <div key={h.text} style={{ display: "flex", alignItems: "center", gap: 8, padding: "6px 10px", background: T.surface, border: `1px solid ${T.border}`, borderRadius: 7 }}>
+                <span style={{ fontSize: 13, flexShrink: 0 }}>{h.icon}</span>
+                <span style={{ fontSize: 11, color: T.t3 }}>{h.text}</span>
+              </div>
+            ))}
           </div>
         </div>
       )}
@@ -399,13 +472,7 @@ function ConfigureStep({ part, onBack, onSave, saving, activeShopId }) {
 
   return (
     <div>
-      {/* Back button */}
-      <button
-        onClick={onBack}
-        style={{ display: "flex", alignItems: "center", gap: 6, background: "none", border: "none", color: T.t3, cursor: "pointer", fontSize: 12, fontWeight: 600, fontFamily: FONT.ui, marginBottom: 14, padding: 0 }}
-      >
-        ← Back to search
-      </button>
+      <BackButton onClick={onBack} />
 
       {/* Part details card (read-only — from global catalog) */}
       <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 12, padding: "14px 16px", marginBottom: 18 }}>
@@ -493,16 +560,35 @@ function ConfigureStep({ part, onBack, onSave, saving, activeShopId }) {
           </div>
         </div>
 
-        {/* Profit preview */}
+        {/* Profit preview — only shown once both prices are entered */}
         {profit !== null && (
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginTop: 14 }}>
-            <div style={{ background: profit > 0 ? `${T.emerald}15` : `#EF444415`, borderRadius: 8, padding: "10px 14px", textAlign: "center" }}>
-              <div style={{ fontSize: 10, color: profit > 0 ? T.emerald : "#EF4444", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.06em" }}>Profit / Unit</div>
-              <div style={{ fontSize: 22, fontWeight: 800, color: profit > 0 ? T.emerald : "#EF4444", fontFamily: FONT.mono }}>{fmt(profit)}</div>
+          <div style={{
+            display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginTop: 14,
+            animation: "scaleIn 0.2s cubic-bezier(0.16,1,0.3,1) both",
+          }}>
+            <div style={{
+              background: profit > 0 ? `${T.emerald}12` : `${T.crimson}12`,
+              border: `1px solid ${profit > 0 ? T.emerald : T.crimson}33`,
+              borderRadius: 10, padding: "12px 14px", textAlign: "center",
+            }}>
+              <div style={{ fontSize: 9, color: profit > 0 ? T.emerald : T.crimson, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.07em", marginBottom: 4 }}>
+                Profit / Unit
+              </div>
+              <div style={{ fontSize: 20, fontWeight: 900, color: profit > 0 ? T.emerald : T.crimson, fontFamily: FONT.mono }}>
+                {profit > 0 ? "+" : ""}{fmt(profit)}
+              </div>
             </div>
-            <div style={{ background: `${T.amber}15`, borderRadius: 8, padding: "10px 14px", textAlign: "center" }}>
-              <div style={{ fontSize: 10, color: T.amber, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.06em" }}>Margin</div>
-              <div style={{ fontSize: 22, fontWeight: 800, color: T.amber, fontFamily: FONT.mono }}>{margin}%</div>
+            <div style={{
+              background: `${T.amber}10`,
+              border: `1px solid ${T.amber}33`,
+              borderRadius: 10, padding: "12px 14px", textAlign: "center",
+            }}>
+              <div style={{ fontSize: 9, color: T.amber, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.07em", marginBottom: 4 }}>
+                Margin
+              </div>
+              <div style={{ fontSize: 20, fontWeight: 900, color: T.amber, fontFamily: FONT.mono }}>
+                {margin}%
+              </div>
             </div>
           </div>
         )}
@@ -520,12 +606,13 @@ function ConfigureStep({ part, onBack, onSave, saving, activeShopId }) {
 }
 
 // ─── Fallback: Contribute new part ────────────────────────────────────────────
-function ContributeStep({ initialName, onBack, onSave, saving }) {
+function ContributeStep({ initialName, initialBarcode, onBack, onSave, saving }) {
   const blank = {
     partName: initialName || "", brand: "", categoryL1: "Engine", categoryL2: "",
-    oemNumber: "", hsnCode: "", gstRate: "18", unitOfSale: "Piece", description: "",
+    oemNumber: initialBarcode || "", hsnCode: "", gstRate: "18", unitOfSale: "Piece", description: "",
     buyPrice: "", sellPrice: "", stockQty: "0", rackLocation: "", minStockAlert: "5",
     image: "📦",
+    _scannedBarcode: initialBarcode || "",
   };
   const [f, setF] = useState(blank);
   const [errors, setErrors] = useState({});
@@ -548,12 +635,7 @@ function ContributeStep({ initialName, onBack, onSave, saving }) {
 
   return (
     <div>
-      <button
-        onClick={onBack}
-        style={{ display: "flex", alignItems: "center", gap: 6, background: "none", border: "none", color: T.t3, cursor: "pointer", fontSize: 12, fontWeight: 600, fontFamily: FONT.ui, marginBottom: 14, padding: 0 }}
-      >
-        ← Back to search
-      </button>
+      <BackButton onClick={onBack} />
 
       <div style={{ padding: "12px 16px", background: `${T.amber}11`, border: `1px solid ${T.amber}44`, borderRadius: 10, marginBottom: 16 }}>
         <div style={{ fontSize: 11, fontWeight: 800, color: T.amber, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 4 }}>
@@ -564,6 +646,17 @@ function ContributeStep({ initialName, onBack, onSave, saving }) {
           Once verified, it becomes available to all shops on the platform.
         </div>
       </div>
+
+      {/* Scanned barcode indicator */}
+      {initialBarcode && (
+        <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 14px", background: `${T.sky}12`, border: `1px solid ${T.sky}44`, borderRadius: 8, marginBottom: 14 }}>
+          <span style={{ fontSize: 18 }}>📷</span>
+          <div>
+            <div style={{ fontSize: 10, fontWeight: 700, color: T.sky, textTransform: "uppercase", letterSpacing: "0.06em" }}>Scanned Barcode</div>
+            <div style={{ fontSize: 12, fontFamily: "monospace", color: T.t1, fontWeight: 700 }}>{initialBarcode}</div>
+          </div>
+        </div>
+      )}
 
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
         <div style={{ gridColumn: "span 2" }}>
@@ -630,6 +723,7 @@ export function CatalogStockInModal({ open, onClose, onSave, toast, activeShopId
   const [step, setStep]           = useState("search"); // "search" | "configure" | "contribute"
   const [selected, setSelected]   = useState(null);
   const [manualQuery, setManualQuery] = useState("");
+  const [manualBarcode, setManualBarcode] = useState("");
   const [saving, setSaving]       = useState(false);
 
   // Reset on open / close
@@ -638,6 +732,7 @@ export function CatalogStockInModal({ open, onClose, onSave, toast, activeShopId
       setStep("search");
       setSelected(null);
       setManualQuery("");
+      setManualBarcode("");
       setSaving(false);
     }
   }, [open]);
@@ -647,8 +742,10 @@ export function CatalogStockInModal({ open, onClose, onSave, toast, activeShopId
     setStep("configure");
   }, []);
 
-  const handleManual = useCallback((query) => {
+  // name: text query or empty; barcode: scanned barcode (optional)
+  const handleManual = useCallback((query, barcode = "") => {
     setManualQuery(query);
+    setManualBarcode(barcode);
     setStep("contribute");
   }, []);
 
@@ -749,6 +846,9 @@ export function CatalogStockInModal({ open, onClose, onSave, toast, activeShopId
           gstRate:     parseFloat(form.gstRate || 18),
           unitOfSale:  form.unitOfSale || "Piece",
           description: form.description || undefined,
+          // Include scanned barcode if this contribution was triggered by a camera scan
+          ...(form._scannedBarcode && { barcodes: [form._scannedBarcode] }),
+          ...(form.oemNumber && { oemNumbers: [form.oemNumber] }),
         });
         masterPartId = catalogRes.part?.masterPartId;
 
@@ -862,6 +962,7 @@ export function CatalogStockInModal({ open, onClose, onSave, toast, activeShopId
       {step === "contribute" && (
         <ContributeStep
           initialName={manualQuery}
+          initialBarcode={manualBarcode}
           onBack={() => setStep("search")}
           onSave={handleContributeSave}
           saving={saving}

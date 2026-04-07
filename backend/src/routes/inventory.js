@@ -20,13 +20,25 @@ router.get('/', authenticate, requireShopOwner, async (req, res, next) => {
       orderBy: { masterPart: { partName: 'asc' } },
     });
 
-    // Compute stock from movements for each item
-    const inventoryWithStock = await Promise.all(
-      inventory.map(async (item) => {
-        const stock = await computeStock(item.inventoryId);
-        return { ...item, computedStock: stock };
-      })
-    );
+    // Compute stock for ALL items in ONE query (avoids N+1)
+    const inventoryIds = inventory.map(i => i.inventoryId);
+    const allMovements = inventoryIds.length > 0
+      ? await prisma.movement.findMany({ where: { inventoryId: { in: inventoryIds } } })
+      : [];
+
+    // Group movements by inventoryId and compute net stock per item
+    const stockMap = {};
+    for (const m of allMovements) {
+      if (!stockMap[m.inventoryId]) stockMap[m.inventoryId] = 0;
+      if (['PURCHASE', 'OPENING', 'RETURN_IN'].includes(m.type)) stockMap[m.inventoryId] += m.qty;
+      else if (['SALE', 'RETURN_OUT', 'DAMAGE', 'THEFT'].includes(m.type)) stockMap[m.inventoryId] -= m.qty;
+      else if (m.type === 'ADJUSTMENT' || m.type === 'AUDIT') stockMap[m.inventoryId] += m.qty;
+    }
+
+    const inventoryWithStock = inventory.map(item => ({
+      ...item,
+      computedStock: stockMap[item.inventoryId] ?? item.stockQty,
+    }));
 
     res.json({ inventory: inventoryWithStock });
   } catch (err) {
@@ -130,13 +142,19 @@ router.get('/:id/movements', authenticate, requireShopOwner, async (req, res, ne
 // POST /api/shop/inventory/purchase
 router.post('/purchase', authenticate, requireShopOwner, async (req, res, next) => {
   try {
-    const { inventoryId, qty, unitPrice, partyId, notes } = req.body;
-    if (!inventoryId || !qty) return res.status(400).json({ error: 'inventoryId and qty required' });
+    // Accept buyingPrice as an alias for unitPrice (frontend sync.js sends buyingPrice)
+    const { inventoryId, partyId, notes } = req.body;
+    const unitPrice = req.body.unitPrice ?? req.body.buyingPrice ?? null;
+    const newSellingPrice = req.body.newSellingPrice ?? null;
+    const qty = parseInt(req.body.qty);
+    if (!inventoryId || isNaN(qty) || qty <= 0) {
+      return res.status(400).json({ error: 'inventoryId and qty (positive integer) required' });
+    }
 
     const item = await prisma.shopInventory.findUnique({ where: { inventoryId } });
     if (!item || item.shopId !== req.shopId) return res.status(404).json({ error: 'Item not found' });
 
-    const totalAmount = unitPrice ? parseFloat(unitPrice) * parseInt(qty) : null;
+    const totalAmount = unitPrice ? parseFloat(unitPrice) * qty : null;
 
     await prisma.$transaction(async (tx) => {
       // Record movement
@@ -145,7 +163,7 @@ router.post('/purchase', authenticate, requireShopOwner, async (req, res, next) 
           shopId: req.shopId,
           inventoryId,
           type: 'PURCHASE',
-          qty: parseInt(qty),
+          qty,
           unitPrice: unitPrice ? parseFloat(unitPrice) : null,
           totalAmount,
           partyId,
@@ -156,15 +174,15 @@ router.post('/purchase', authenticate, requireShopOwner, async (req, res, next) 
       // Update cached stock
       await tx.shopInventory.update({
         where: { inventoryId },
-        data: { stockQty: { increment: parseInt(qty) } },
+        data: { stockQty: { increment: qty } },
       });
 
-      // Update buying price if provided
-      if (unitPrice) {
-        await tx.shopInventory.update({
-          where: { inventoryId },
-          data: { buyingPrice: parseFloat(unitPrice) },
-        });
+      // Update buying price and/or selling price if provided
+      const priceUpdates = {};
+      if (unitPrice) priceUpdates.buyingPrice = parseFloat(unitPrice);
+      if (newSellingPrice) priceUpdates.sellingPrice = parseFloat(newSellingPrice);
+      if (Object.keys(priceUpdates).length > 0) {
+        await tx.shopInventory.update({ where: { inventoryId }, data: priceUpdates });
       }
     });
 
@@ -333,13 +351,32 @@ router.post('/adjust', authenticate, requireShopOwner, async (req, res, next) =>
     const { inventoryId, type, qty, notes } = req.body;
     if (!inventoryId || !type || qty === undefined) return res.status(400).json({ error: 'inventoryId, type, and qty required' });
 
-    const validTypes = ['ADJUSTMENT', 'DAMAGE', 'THEFT', 'RETURN_IN'];
+    // All adjustment types accepted from frontend (AUDIT, OPENING, CREDIT_NOTE, DEBIT_NOTE are
+    // financial-only and carry no stock change)
+    const validTypes = [
+      'ADJUSTMENT', 'DAMAGE', 'THEFT', 'RETURN_IN', 'RETURN_OUT',
+      'OPENING', 'AUDIT', 'CREDIT_NOTE', 'DEBIT_NOTE',
+    ];
     if (!validTypes.includes(type)) return res.status(400).json({ error: `type must be one of: ${validTypes.join(', ')}` });
 
     const item = await prisma.shopInventory.findUnique({ where: { inventoryId } });
     if (!item || item.shopId !== req.shopId) return res.status(404).json({ error: 'Item not found' });
 
-    const qtyChange = ['DAMAGE', 'THEFT'].includes(type) ? -Math.abs(parseInt(qty)) : parseInt(qty);
+    // Map each type to its stock delta direction:
+    //   +qty: RETURN_IN, OPENING, ADJUSTMENT (positive values add stock)
+    //   -qty: DAMAGE, THEFT, RETURN_OUT (always reduce stock, store abs qty in movement)
+    //    0:   CREDIT_NOTE, DEBIT_NOTE (financial only, no physical stock change)
+    const STOCK_OUT_TYPES = ['DAMAGE', 'THEFT', 'RETURN_OUT'];
+    const NO_STOCK_TYPES  = ['CREDIT_NOTE', 'DEBIT_NOTE'];
+    let qtyChange;
+    if (NO_STOCK_TYPES.includes(type)) {
+      qtyChange = 0;
+    } else if (STOCK_OUT_TYPES.includes(type)) {
+      qtyChange = -Math.abs(parseInt(qty));
+    } else {
+      // RETURN_IN, OPENING: always positive; ADJUSTMENT: caller controls sign via qty
+      qtyChange = parseInt(qty);
+    }
 
     await prisma.$transaction(async (tx) => {
       await tx.movement.create({
@@ -370,7 +407,9 @@ async function computeStock(inventoryId) {
   return movements.reduce((total, m) => {
     if (['PURCHASE', 'OPENING', 'RETURN_IN'].includes(m.type)) return total + m.qty;
     if (['SALE', 'RETURN_OUT', 'DAMAGE', 'THEFT'].includes(m.type)) return total - m.qty;
-    if (m.type === 'ADJUSTMENT') return total + m.qty; // qty can be negative for downward adj
+    // ADJUSTMENT and AUDIT: qty can be negative (downward correction) or positive (upward)
+    if (m.type === 'ADJUSTMENT' || m.type === 'AUDIT') return total + m.qty;
+    // RECEIPT, CREDIT_NOTE, DEBIT_NOTE: financial only — no stock change
     return total;
   }, 0);
 }

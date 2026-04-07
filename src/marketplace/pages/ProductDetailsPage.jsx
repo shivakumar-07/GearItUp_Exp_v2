@@ -179,9 +179,28 @@ export function ProductDetailsPage({ productId, onBack }) {
         );
     }
 
-    const { master, listings } = productData;
-    const winner = listings[0]; // Buy Box winner
+    const { master, listings: rawListings } = productData;
+
+    // Sort by price ascending; cheapest row gets "Best Price" highlight
+    const listings = [...rawListings].sort((a, b) => a.selling_price - b.selling_price);
+    const winner = rawListings[0]; // Buy Box winner (by buyBoxScore, unchanged)
+    const cheapestIdx = 0; // after price-asc sort, index 0 is always cheapest
+    const fastestShopId = rawListings.reduce((f, l) => (!f || l.distance < f.distance) ? l : f, null)?.shop_id;
     const fitment = checkFitment(master, selectedVehicle);
+
+    const getCategoryEmoji = (cat = "") => {
+        const c = cat.toLowerCase();
+        if (c.includes("engine") || c.includes("motor")) return "⚙️";
+        if (c.includes("brake") || c.includes("tyre") || c.includes("wheel")) return "🛞";
+        if (c.includes("electr") || c.includes("battery") || c.includes("light")) return "⚡";
+        if (c.includes("filter")) return "🔩";
+        if (c.includes("oil") || c.includes("fluid") || c.includes("lubric")) return "🛢️";
+        if (c.includes("body") || c.includes("bumper") || c.includes("mirror")) return "🚗";
+        if (c.includes("suspension") || c.includes("shock") || c.includes("spring")) return "🔧";
+        if (c.includes("exhaust") || c.includes("muffler")) return "💨";
+        if (c.includes("seat") || c.includes("interior")) return "🪑";
+        return "📦";
+    };
     const { rating, count } = getStarRating(master.id);
 
     const handleAddToCart = (listing) => {
@@ -204,6 +223,17 @@ export function ProductDetailsPage({ productId, onBack }) {
 
     return (
         <div style={{ maxWidth: 1100, margin: "0 auto", padding: "24px 20px" }}>
+            {/* ═══════ BREADCRUMB ═══════ */}
+            <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 16, fontSize: 12, color: T.t3 }}>
+                <span onClick={() => onBack?.()} style={{ cursor: "pointer", color: T.amber }}>Home</span>
+                <span>›</span>
+                <span>{master?.category}</span>
+                <span>›</span>
+                <span>{master?.brand}</span>
+                <span>›</span>
+                <span style={{ color: T.t1 }}>{master?.name}</span>
+            </div>
+
             <button onClick={onBack} style={{ background: "transparent", border: "none", color: T.t3, fontSize: 13, cursor: "pointer", marginBottom: 20, display: "flex", alignItems: "center", gap: 6 }}>
                 ← Back to Marketplace
             </button>
@@ -247,7 +277,7 @@ export function ProductDetailsPage({ productId, onBack }) {
                 </div>
             )}
 
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1.3fr", gap: 32 }}>
+            <div className="checkout-grid" style={{ display: "grid", gridTemplateColumns: "1fr 1.3fr", gap: 32 }}>
                 {/* ═══════ LEFT: Product Image & Specs ═══════ */}
                 <div>
                     {/* Hero Image */}
@@ -256,7 +286,9 @@ export function ProductDetailsPage({ productId, onBack }) {
                             {master.image ? (
                                 <img src={master.image} alt={master.name} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
                             ) : (
-                                <span style={{ fontSize: 80, opacity: 0.3 }}>📦</span>
+                                <div style={{ width: "100%", aspectRatio: "1/1", background: `linear-gradient(135deg,${T.card},${T.surface})`, borderRadius: 14, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 64, opacity: 0.4, border: `1px solid ${T.border}` }}>
+                                    {getCategoryEmoji(master?.category)}
+                                </div>
                             )}
                         </div>
                     </div>
@@ -296,6 +328,20 @@ export function ProductDetailsPage({ productId, onBack }) {
                             <span style={{ color: "#FBBF24", fontSize: 15, letterSpacing: 1 }}>{renderStars(+rating)}</span>
                             <span style={{ fontSize: 14, fontWeight: 700, color: T.t2 }}>{rating}</span>
                             <span style={{ fontSize: 13, color: T.t3 }}>({count} ratings)</span>
+                        </div>
+                        {/* Fitment badge */}
+                        <div style={{ marginTop: 10 }}>
+                            {selectedVehicle ? (
+                                fitment.compatible ? (
+                                    <span style={{ background: T.emeraldBg, color: T.emerald, fontSize: 11, fontWeight: 700, padding: "4px 12px", borderRadius: 99, display: "inline-flex", alignItems: "center", gap: 5 }}>
+                                        ✓ Fits your {selectedVehicle?.make || selectedVehicle?.brand} {selectedVehicle?.model}
+                                    </span>
+                                ) : null
+                            ) : (
+                                <span style={{ background: T.skyBg, color: T.sky, fontSize: 11, fontWeight: 700, padding: "4px 12px", borderRadius: 99, display: "inline-flex", alignItems: "center", gap: 5 }}>
+                                    ⊕ Universal Fit
+                                </span>
+                            )}
                         </div>
                         {master.sku && (
                             <div style={{ fontSize: 12, color: T.t3, marginTop: 8, fontFamily: FONT.mono }}>SKU: {master.sku}</div>
@@ -361,7 +407,7 @@ export function ProductDetailsPage({ productId, onBack }) {
                         </div>
                     )}
 
-                    {/* ═══════ OTHER SELLERS TABLE ═══════ */}
+                    {/* ═══════ OTHER SELLERS TABLE (sorted price asc) ═══════ */}
                     {listings.length > 1 && (
                         <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: 16, padding: 24 }}>
                             <h3 style={{ fontSize: 16, fontWeight: 900, color: T.t1, margin: "0 0 16px" }}>
@@ -369,23 +415,29 @@ export function ProductDetailsPage({ productId, onBack }) {
                             </h3>
                             <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
                                 {listings.map((listing, i) => {
-                                    const isWinner = i === 0;
+                                    const isCheapest = i === cheapestIdx;
                                     return (
                                         <div
                                             key={listing.shop_id}
                                             style={{
                                                 display: "flex", alignItems: "center", gap: 16,
                                                 padding: "14px 16px", borderRadius: 12,
-                                                background: isWinner ? `${T.amber}08` : T.surface,
-                                                border: `1px solid ${isWinner ? T.amber + "44" : T.border}`,
+                                                background: isCheapest ? `${T.amber}08` : T.surface,
+                                                border: `1px solid ${isCheapest ? T.amber + "44" : T.border}`,
+                                                borderLeft: isCheapest ? `3px solid ${T.amber}` : `1px solid ${T.border}`,
                                                 transition: "all 0.15s"
                                             }}
                                         >
                                             {/* Shop Info */}
                                             <div style={{ flex: 1, minWidth: 0 }}>
-                                                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                                                <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
                                                     <span style={{ fontSize: 14, fontWeight: 700, color: T.t1 }}>{listing.shop.name}</span>
-                                                    {isWinner && <span style={{ background: T.amber, color: "#000", fontSize: 9, fontWeight: 900, padding: "2px 6px", borderRadius: 4 }}>BUY BOX</span>}
+                                                    {isCheapest && (
+                                                        <span style={{ background: T.amberGlow, border: `1px solid ${T.amber}44`, color: T.amber, fontSize: 9, fontWeight: 700, padding: "2px 7px", borderRadius: 99, marginLeft: 6 }}>Best Price</span>
+                                                    )}
+                                                    {listing.shop_id === fastestShopId && listing.shop_id !== listings[cheapestIdx]?.shop_id && (
+                                                        <span style={{ background: `${T.emerald}15`, border: `1px solid ${T.emerald}44`, color: T.emerald, fontSize: 9, fontWeight: 700, padding: "2px 7px", borderRadius: 99 }}>Fastest Delivery</span>
+                                                    )}
                                                 </div>
                                                 <div style={{ fontSize: 12, color: T.t3, marginTop: 4, display: "flex", gap: 12 }}>
                                                     <span>📍 {listing.distance} km</span>
@@ -408,9 +460,9 @@ export function ProductDetailsPage({ productId, onBack }) {
                                                 onClick={() => handleAddToCart(listing)}
                                                 disabled={listing.stock_quantity <= 0}
                                                 style={{
-                                                    background: addedToCartShop === listing.shop_id ? T.emerald : (isWinner ? T.amber : T.surface),
-                                                    border: isWinner ? "none" : `1px solid ${T.border}`,
-                                                    color: isWinner ? "#000" : T.t1,
+                                                    background: addedToCartShop === listing.shop_id ? T.emerald : (isCheapest ? T.amber : T.surface),
+                                                    border: isCheapest ? "none" : `1px solid ${T.border}`,
+                                                    color: isCheapest ? "#000" : T.t1,
                                                     borderRadius: 10, padding: "10px 16px",
                                                     fontSize: 12, fontWeight: 800, cursor: "pointer",
                                                     flexShrink: 0, transition: "all 0.2s",

@@ -8,7 +8,7 @@ export function StatCard({ label, value, sub, color, icon, trend, onClick, glow 
                 <span style={{ fontSize: 11, fontWeight: 600, color: T.t3, letterSpacing: "0.07em", textTransform: "uppercase", fontFamily: FONT.ui }}>{label}</span>
                 {icon && <span style={{ fontSize: 20, opacity: 0.7 }}>{icon}</span>}
             </div>
-            <div style={{ fontSize: 28, fontWeight: 800, color: color || T.t1, fontFamily: FONT.mono, letterSpacing: "-0.02em", lineHeight: 1 }}>{value}</div>
+            <div style={{ fontSize: "clamp(16px, 3vw, 28px)", fontWeight: 800, color: color || T.t1, fontFamily: FONT.mono, letterSpacing: "-0.02em", lineHeight: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{value}</div>
             {(sub || trend) && (
                 <div style={{ marginTop: 8, display: "flex", alignItems: "center", gap: 6 }}>
                     {trend && (

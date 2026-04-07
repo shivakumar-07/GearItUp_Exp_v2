@@ -1,176 +1,147 @@
-# GearItUp — AutoSpace
+# GearItUp — AutoSpace ⚙️
 
-> B2B2C SaaS platform for India's auto parts retail market.
-> Shop owners get a full ERP/POS. Customers browse parts with fitment guarantees and hyperlocal delivery.
+> **The OS for India's Auto Parts Industry.**  
+> A hyper-modern B2B2C SaaS platform bridging the gap between traditional auto part retailers (ERP/POS) and the digital consumer market (Marketplace).
 
----
-
-## Tech Stack
-
-| Layer | Technology |
-|-------|-----------|
-| Frontend | React 18 + Vite |
-| Backend | Node.js + Express |
-| Database | PostgreSQL (Supabase) |
-| Auth | Firebase (Phone OTP + Google) + JWT sessions |
-| Email | Resend |
-| ORM | Prisma |
+[![Version](https://img.shields.io/badge/version-2.1.0-amber.svg)](https://github.com/shivakumar-07/GearItUp_Exp)
+[![Tech](https://img.shields.io/badge/Tech-React%2019%20%2B%20Vite%20%2B%20Node.js-blue.svg)](https://vitejs.dev/)
+[![Database](https://img.shields.io/badge/Database-PostgreSQL%20(Supabase)-emerald.svg)](https://supabase.com/)
 
 ---
 
-## For Team Collaborators (Recommended)
+## 🌟 The Core Value Proposition
 
-If you're a contributor working with the project owner, ask them to send you two files privately (WhatsApp / Telegram):
+AutoSpace is designed for the 98% of Indian auto parts retailers who still rely on manual registers or outdated offline software. 
 
-- `backend/.env`
-- `.env`
+1.  **For Shop Owners**: A lightning-fast, keyboard-driven ERP that handles multi-item GST billing, instant stock tracking, party ledgers (Udhaar), and staff management.
+2.  **For Customers**: A hyperlocal marketplace to find parts with a **Fitment Guarantee** based on their specific vehicle (Make → Model → Year → Variant).
+3.  **For Workshops**: A dedicated job-card system with Kanban-based workflow tracking, checklists, and automated WhatsApp invoicing.
 
-Then:
+---
+
+## 🛡️ Key Modules & Capabilities
+
+### 🏢 1. ERP & POS (Retail Intelligence)
+*   **Keyboard-First POS**: Bulletproof billing with `Ctrl+K` command palette, `Ctrl+N` new bill, and barcode scanner integration (`Ctrl+B`).
+*   **Smart Inventory**: Detailed stock tracking with reorder alerts (shimmering UI indicators), bulk stock-in via master catalog search, and dead stock analysis.
+*   **Audit & Ledger**: Immutable transaction ledgers for every movement (Sale, Purchase, Return, Damage, Theft, Audit).
+*   **Party Management**: Digital *Khata* book with aging analysis (Green to Red buckets) and automated WhatsApp payment reminders for Udhaar.
+*   **One-Click GST**: Automated CGST/SGST/IGST calculation, GSTR-1 JSON export (Portal ready), and GSTR-3B worksheets.
+
+### 🔧 2. Workshop Management
+*   **Visual Job Cards**: Kanban-based workflow (Draft → Diagnosed → In Progress → Waiting Parts → Ready → Invoiced).
+*   **Time Tracking**: Real-time elapsed time monitoring for active jobs.
+*   **Service Checklists**: Standardized inspection and repair tasks to ensure quality control.
+*   **Integrated Billing**: Convert completed job cards directly into POS invoices with parts & labour breakdown.
+
+### 🌐 3. B2C Marketplace
+*   **Fitment Engine**: Search parts by OEM Number or Vehicle Fitment (Maruti, Hyundai, Tata, etc.).
+*   **Multi-Vendor Cart**: Shop from multiple local stores in a single checkout flow.
+*   **Reviews & Trust**: Verified purchase reviews with star ratings and helpfulness counts.
+*   **Real-Time Tracking**: Live order status updates (Placed → Accepted → Out for Delivery → Delivered).
+
+---
+
+## 🛠️ Technology Stack
+
+| Layer | Recommended | Why |
+| :--- | :--- | :--- |
+| **Frontend** | React 19 + Vite | State-of-the-art performance, tiny bundle size, and ultra-fast HMR. |
+| **Backend** | Node.js + Express | Unified JS ecosystem. High concurrency for API requests. |
+| **Database** | PostgreSQL (Supabase) | Strict ACID compliance for financial integrity & relational fitment data. |
+| **ORM** | Prisma | Type-safe queries and automated schema migrations. |
+| **Auth** | Firebase + JWT | Phone OTP (primary) + Google login with sliding JWT session rotation. |
+| **Styling** | Vanilla CSS + Tokens | Zero runtime overhead. Custom design system with "Outfit" & "JetBrains Mono" fonts. |
+| **Notifications** | Resend + WhatsApp | Transactional emails and Business API integration (WATI/Interakt). |
+
+---
+
+## 📂 Project Structure
+
+```
+├── src/                        # React frontend (Vite)
+│   ├── pages/                  # Core modules (Dashboard, Inventory, Workshop, etc.)
+│   ├── components/             # Reusable UI system (Btn, Input, Modal, StatCard)
+│   ├── marketplace/            # Independent B2C Storefront sub-app
+│   ├── api/                    # Networking (Axios client + background Sync engine)
+│   ├── theme.js                # Semantic design system (Colors, FONT, Global CSS)
+│   └── store.js                # Global state persistence & Business logic
+│
+├── backend/                    # Node.js Express server
+│   ├── prisma/                 # Schema & Migrations (PostgreSQL)
+│   ├── src/
+│   │   ├── routes/             # Feature-based API (Auth, Catalog, Billing, Staff)
+│   │   └── services/           # Business logic (Email, Firebase, OTP, PDF Gen)
+│   └── scripts/                # Database maintenance & migration tools
+│
+└── 📜 AutoMobile_DevGuide.md    # 90KB technical blueprint & roadmap
+```
+
+---
+
+## 🚀 Getting Started
+
+### 1. Prerequisites
+*   Node.js (v18+)
+*   A Supabase project (for PostgreSQL)
+*   A Firebase project (for Auth)
+
+### 2. Setup Environment
+Clone the repo and create `.env` files:
 
 ```bash
-# 1. Clone
-git clone https://github.com/shivakumar-07/GearItUp_Exp.git
-cd GearItUp_Exp
+# Root .env (Frontend)
+VITE_FIREBASE_API_KEY=your_key
+VITE_API_URL=http://localhost:3001
 
-# 2. Paste the .env files the project owner sent you
-#    → .env          (in root)
-#    → backend/.env  (in backend/)
+# backend/.env (Backend)
+DATABASE_URL="postgres://..."
+DIRECT_URL="postgres://..."
+JWT_SECRET="your_secret"
+FIREBASE_PROJECT_ID="..."
+RESEND_API_KEY="..."
+```
 
-# 3. Install dependencies
+### 3. Install & Start
+```bash
+# Install everything
 npm install
 cd backend && npm install && cd ..
 
-# 4. Start
-cd backend && npm run dev    # backend → http://localhost:3001
-# (new terminal)
-npm run dev                  # frontend → http://localhost:5173
-```
-
-Done — you're on the same database, same auth, same email setup as the project owner.
-
----
-
-## Fresh Setup (New Instance / Deployment)
-
-Only needed if you're deploying your own copy or starting from scratch.
-
-### Services to create (all have free tiers)
-
-| Service | Purpose | Link |
-|---------|---------|------|
-| Supabase | PostgreSQL database | [supabase.com](https://supabase.com) |
-| Firebase | Phone OTP + Google login | [console.firebase.google.com](https://console.firebase.google.com) |
-| Resend | Transactional email | [resend.com](https://resend.com) |
-
-### Frontend env
-
-```bash
-cp .env.example .env
-```
-
-Fill in your Firebase Web App config from Firebase Console → Project Settings → Your Apps.
-
-### Backend env
-
-```bash
-cp backend/.env.example backend/.env
-```
-
-Fill in:
-- `DATABASE_URL` — from Supabase → Settings → Database → URI
-- `JWT_SECRET` + `JWT_REFRESH_SECRET` — any two random strings (run `openssl rand -hex 32`)
-- `FIREBASE_PROJECT_ID`, `FIREBASE_CLIENT_EMAIL`, `FIREBASE_PRIVATE_KEY` — from Firebase Service Account JSON
-- `RESEND_API_KEY` + `RESEND_SENDER_EMAIL` — from Resend dashboard
-
-### Push DB schema
-
-```bash
+# Run Backend
 cd backend
-DATABASE_URL="your-supabase-url" npm run db:push
+npm run dev
+
+# Run Frontend (New Terminal)
+npm run dev
 ```
 
 ---
 
-## Project Structure
+## 🏛️ API Quick Reference
 
-```
-├── src/                        # React frontend
-│   ├── pages/
-│   │   ├── LoginPage.jsx       # 4-step auth flow (email / phone / Google)
-│   │   ├── ProfilePage.jsx
-│   │   ├── SettingsPage.jsx
-│   │   └── ResetPasswordPage.jsx
-│   ├── components/
-│   ├── marketplace/            # B2C storefront
-│   ├── store.js                # Global React context + state
-│   └── App.jsx                 # Routing + ERP/Marketplace mode switching
-│
-├── backend/
-│   ├── prisma/schema.prisma    # Full DB schema
-│   └── src/
-│       ├── routes/auth/        # Modular auth routes
-│       │   ├── email.js        # Email + password signup/login
-│       │   ├── firebase.js     # Google + Firebase phone auth
-│       │   ├── password.js     # Forgot / reset password
-│       │   ├── session.js      # Refresh token rotation + logout
-│       │   ├── profile.js      # Profile, settings, sessions, account delete
-│       │   └── providers.js    # Link / unlink OAuth providers
-│       └── services/
-│           ├── email.js        # Resend transactional emails
-│           ├── firebase.js     # Firebase Admin SDK token verification
-│           ├── otp.js          # Phone OTP (MSG91 in prod, console log in dev)
-│           └── password.js     # bcrypt hashing + strength validation
-│
-├── .env.example                # Frontend env template
-├── backend/.env.example        # Backend env template
-└── README.md
-```
+| Method | Endpoint | Description |
+| :--- | :--- | :--- |
+| `POST` | `/api/auth/request-otp` | Request Phone OTP (Rate limited) |
+| `POST` | `/api/billing/invoice` | Generate GST Invoice & deduct stock |
+| `GET` | `/api/catalog/search` | Master catalog search with fitment filters |
+| `GET` | `/api/shop/staff` | List staff members and permissions |
+| `POST` | `/api/marketplace/order`| Create multi-vendor marketplace order |
+| `GET` | `/api/dashboard/stats` | Pre-computed KPI metrics for shop owner |
 
 ---
 
-## Auth Flows
+## 📅 Roadmap: Three-Phase Vision
 
-| Method | Flow |
-|--------|------|
-| Email + Password | Register → OTP email via Resend → verify → login |
-| Phone OTP | Enter phone → Firebase SMS → verify code |
-| Google | One-click OAuth → auto profile creation |
-| Forgot Password | Email → reset link via Resend → set new password |
+*   **Phase 1 (Pilot)**: Prototype to real-world use with 10 shops in Hyderabad. (Current Status: ✅ **90% Complete**)
+*   **Phase 2 (Scale)**: Delivery partner integration (Dunzo/Porter), Advanced GST filing, and Shop Mobile App.
+*   **Phase 3 (Expansion)**: Multi-city launch, OEM cross-reference engine, and AI-powered reorder suggestions.
 
 ---
 
-## API Reference
+## ⚖️ License & Contributions
 
-All auth routes: `POST/GET/PATCH/DELETE /api/auth/*`
-
-```
-POST   /register              Email signup (sends OTP email)
-POST   /login                 Email + password login
-POST   /firebase              Exchange Firebase token → JWT
-POST   /verify-email          Verify email OTP code
-POST   /forgot-password       Send password reset email
-POST   /reset-password        Set new password via token
-POST   /refresh               Rotate refresh token
-POST   /logout                Revoke current session
-GET    /me                    Get full profile
-PATCH  /me                    Update name / email
-DELETE /me                    Delete account (soft)
-PUT    /me/profile            Update gender / DOB / addresses
-GET    /me/settings           Get notification settings
-PUT    /me/settings           Update settings
-PATCH  /me/shop               Update shop details
-POST   /register-shop         Create shop (shop owners)
-POST   /change-password       Change password
-POST   /logout-all            Revoke all sessions (all devices)
-GET    /me/sessions           List active sessions
-DELETE /me/sessions/:id       Revoke a specific session
-```
+Proprietary Software — Developed by [Shiva Kumar](https://github.com/shivakumar-07). Internal use and authorized partners only.
 
 ---
-
-## Dev Notes
-
-- **Phone OTP in dev**: `NODE_ENV=development` → OTP logged to console, no SMS sent
-- **Firebase bypass in dev**: if Firebase Admin keys not set, use `dev:9876543210` as token for phone or `dev-google:you@example.com` for Google
-- **DB schema changes**: edit `prisma/schema.prisma` → run `npm run db:push` from `backend/`
-- **No test framework** configured — manual testing via UI
+*Built with ❤️ for the Indian Auto Parts Market.*
