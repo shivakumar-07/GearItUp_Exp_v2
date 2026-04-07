@@ -433,7 +433,7 @@ function AppContent() {
     products, movements, orders, shops, parties, vehicles, jobCards,
     saveProducts, saveMovements, saveOrders, saveShops, saveParties, saveVehicles, saveJobCards,
     auditLog, receipts, saveReceipts,
-    loaded, activeShopId, setActiveShopId, persistShopId, logAudit, resetAll,
+    loaded, activeShopId, setActiveShopId, persistShopId, logAudit, resetAll, clearStore,
   } = useStore();
 
   // ── UI state ──
@@ -493,16 +493,19 @@ function AppContent() {
   }, [navigate, setActiveShopId]);
 
   const handleLogout = useCallback(() => {
-    // Revoke the refresh token in the backend (fire-and-forget — don't block the UI)
+    // Revoke the refresh token in the backend (fire-and-forget)
     const rt = localStorage.getItem("as_refresh_token");
     api.post("/api/auth/logout", { refreshToken: rt }).catch(() => {});
+    
+    // Clear both auth tokens and application store data
     clearTokens();
+    clearStore(); // Wipes all vl_* from localStorage and state
+    
     localStorage.removeItem("as_user");
     localStorage.removeItem("as_refresh_token");
-    localStorage.removeItem("vl_shopId"); // clear real shopId on logout
     setCurrentUser(null);
     navigate("/login", { replace: true });
-  }, [navigate]);
+  }, [navigate, clearStore]);
 
   // ── Business handlers ──
   const saveProduct = useCallback((p) => {

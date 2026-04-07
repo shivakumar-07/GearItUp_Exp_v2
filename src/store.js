@@ -93,31 +93,23 @@ export function useStoreProvider() {
                 const storedVehicles   = localStorage.getItem("vl_vehicles");
                 const storedJobCards   = localStorage.getItem("vl_jobCards");
 
-                setShops(storedShops       ? JSON.parse(storedShops)      : SEED_SHOPS);
-                setP(storedProducts        ? JSON.parse(storedProducts)    : SEED_PRODUCTS);
-                setM(storedMovements       ? JSON.parse(storedMovements)   : genSeededMovements());
-                setOrders(storedOrders     ? JSON.parse(storedOrders)      : SEED_ORDERS);
-                setPurchases(storedPurchases ? JSON.parse(storedPurchases) : SEED_PURCHASES);
+                setShops(storedShops       ? JSON.parse(storedShops)      : []);
+                setP(storedProducts        ? JSON.parse(storedProducts)    : []);
+                setM(storedMovements       ? JSON.parse(storedMovements)   : []);
+                setOrders(storedOrders     ? JSON.parse(storedOrders)      : []);
+                setPurchases(storedPurchases ? JSON.parse(storedPurchases) : []);
                 setAuditLog(storedAuditLog ? JSON.parse(storedAuditLog)    : []);
                 setReceipts(storedReceipts ? JSON.parse(storedReceipts)    : []);
-                setParties(storedParties   ? JSON.parse(storedParties)     : SEED_PARTIES);
-                setVehicles(storedVehicles ? JSON.parse(storedVehicles)    : SEED_VEHICLES);
-                setJobCards(storedJobCards ? JSON.parse(storedJobCards)    : SEED_JOB_CARDS);
+                setParties(storedParties   ? JSON.parse(storedParties)     : []);
+                setVehicles(storedVehicles ? JSON.parse(storedVehicles)    : []);
+                setJobCards(storedJobCards ? JSON.parse(storedJobCards)    : []);
 
                 if (storedVehicle) setSelectedVehicle(JSON.parse(storedVehicle));
                 if (storedCart) setCart(JSON.parse(storedCart));
                 if (storedAppMode) setAppMode(storedAppMode);
             } catch {
-                setShops(SEED_SHOPS);
-                setP(SEED_PRODUCTS);
-                setM(genSeededMovements());
-                setOrders(SEED_ORDERS);
-                setPurchases(SEED_PURCHASES);
-                setAuditLog([]);
-                setReceipts([]);
-                setParties(SEED_PARTIES);
-                setVehicles(SEED_VEHICLES);
-                setJobCards(SEED_JOB_CARDS);
+                setShops([]); setP([]); setM([]); setOrders([]); setPurchases([]);
+                setAuditLog([]); setReceipts([]); setParties([]); setVehicles([]); setJobCards([]);
             }
             setL(true);
 
@@ -182,14 +174,21 @@ export function useStoreProvider() {
             localStorage.setItem("vl_movements",  JSON.stringify(genSeededMovements()));
             localStorage.setItem("vl_orders",     JSON.stringify(SEED_ORDERS));
             localStorage.setItem("vl_purchases",  JSON.stringify(SEED_PURCHASES));
-            localStorage.removeItem("vl_cart");
-            localStorage.removeItem("vl_vehicle");
-            localStorage.removeItem("vl_auditLog");
-            localStorage.removeItem("vl_receipts");
-            localStorage.removeItem("vl_shopId");  // clear real shopId so seed data shows correctly
             localStorage.setItem("vl_parties",    JSON.stringify(SEED_PARTIES));
             localStorage.setItem("vl_vehicles",   JSON.stringify(SEED_VEHICLES));
             localStorage.setItem("vl_jobCards",   JSON.stringify(SEED_JOB_CARDS));
+            localStorage.removeItem("vl_shopId");
+        } catch { }
+    }, []);
+
+    const clearStore = useCallback(() => {
+        setShops([]); setP([]); setM([]); setOrders([]); setPurchases([]);
+        setCart([]); setSelectedVehicle(null); setAuditLog([]); setReceipts([]);
+        setParties([]); setVehicles([]); setJobCards([]);
+        setActiveShopId("s1");
+        try {
+            const keys = ["vl_shops", "vl_products", "vl_movements", "vl_orders", "vl_purchases", "vl_cart", "vl_vehicle", "vl_auditLog", "vl_receipts", "vl_shopId", "vl_parties", "vl_vehicles", "vl_jobCards"];
+            keys.forEach(k => localStorage.removeItem(k));
         } catch { }
     }, []);
 
@@ -201,7 +200,7 @@ export function useStoreProvider() {
         appMode, saveAppMode,
         activeShopId, setActiveShopId, persistShopId,
         marketplacePage, setMarketplacePage,
-        logAudit, resetAll, loaded, apiSynced
+        logAudit, resetAll, clearStore, loaded, apiSynced
     };
 }
 
