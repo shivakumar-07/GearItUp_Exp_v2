@@ -42,6 +42,17 @@ export function CheckoutPage({ onBack, onOrderPlaced }) {
     const totalValue = totalSubtotal + totalShipping;
     const gstInclusive = Math.round((totalValue * 18) / 118);
 
+    // Pincode → city/state auto-fill (mock lookup)
+    const handlePincodeChange = (pin) => {
+        setAddress(a => ({ ...a, pincode: pin }));
+        if (pin.length === 6) {
+            const cityMap = { "1": "Delhi", "2": "Delhi", "3": "Jaipur", "4": "Mumbai", "5": "Hyderabad", "6": "Chennai", "7": "Kolkata", "8": "Bangalore", "9": "Ahmedabad" };
+            const stateMap = { "1": "Delhi", "2": "Haryana", "3": "Rajasthan", "4": "Maharashtra", "5": "Telangana", "6": "Tamil Nadu", "7": "West Bengal", "8": "Karnataka", "9": "Gujarat" };
+            const first = pin[0];
+            setAddress(a => ({ ...a, city: cityMap[first] || a.city, state: stateMap[first] || a.state }));
+        }
+    };
+
     // Validation
     const validateAddress = () => {
         const e = {};
@@ -166,7 +177,7 @@ export function CheckoutPage({ onBack, onOrderPlaced }) {
                             </div>
                             <div style={{ fontSize: 10, fontWeight: 700, color: isActive ? T.amber : isDone ? T.emerald : T.t3, textTransform: "uppercase", letterSpacing: "0.05em", whiteSpace: "nowrap" }}>{label}</div>
                         </div>
-                        {i < 3 && <div style={{ width: 50, height: 2, background: isDone ? T.emerald : T.border, margin: "0 6px", marginBottom: 20, transition: "all 0.3s" }} />}
+                        {i < 3 && <div className="step-connector" style={{ width: 50, height: 2, background: isDone ? T.emerald : T.border, margin: "0 6px", marginBottom: 20, transition: "all 0.3s" }} />}
                     </div>
                 );
             })}
@@ -198,11 +209,11 @@ export function CheckoutPage({ onBack, onOrderPlaced }) {
 
             {/* ════════ ADDRESS STEP ════════ */}
             {step === "address" && (
-                <div style={{ display: "grid", gridTemplateColumns: "1.4fr 1fr", gap: 40 }}>
+                <div className="checkout-grid" style={{ display: "grid", gridTemplateColumns: "1.4fr 1fr", gap: 40 }}>
                     <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: 16, padding: 28 }}>
                         <h2 style={{ fontSize: 20, fontWeight: 900, color: T.t1, margin: "0 0 24px" }}>📍 Delivery Address</h2>
                         <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-                            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
+                            <div className="inner-grid-2" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
                                 <div>
                                     <label style={labelStyle}>Full Name *</label>
                                     <input value={address.name} onChange={e => setAddress({ ...address, name: e.target.value })} style={fieldStyle(errors.name)} placeholder="John Doe" />
@@ -223,7 +234,7 @@ export function CheckoutPage({ onBack, onOrderPlaced }) {
                                 <label style={labelStyle}>Address Line 2 (Optional)</label>
                                 <input value={address.line2} onChange={e => setAddress({ ...address, line2: e.target.value })} style={fieldStyle()} placeholder="Landmark, Area" />
                             </div>
-                            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 16 }}>
+                            <div className="inner-grid-2" style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 16 }}>
                                 <div>
                                     <label style={labelStyle}>City</label>
                                     <input value={address.city} onChange={e => setAddress({ ...address, city: e.target.value })} style={fieldStyle()} />
@@ -234,7 +245,7 @@ export function CheckoutPage({ onBack, onOrderPlaced }) {
                                 </div>
                                 <div>
                                     <label style={labelStyle}>Pincode *</label>
-                                    <input value={address.pincode} onChange={e => setAddress({ ...address, pincode: e.target.value })} style={fieldStyle(errors.pincode)} placeholder="500033" maxLength={6} />
+                                    <input value={address.pincode} onChange={e => handlePincodeChange(e.target.value)} style={fieldStyle(errors.pincode)} placeholder="500033" maxLength={6} />
                                     {errors.pincode && <div style={{ fontSize: 11, color: T.crimson, marginTop: 4 }}>{errors.pincode}</div>}
                                 </div>
                             </div>
@@ -252,7 +263,7 @@ export function CheckoutPage({ onBack, onOrderPlaced }) {
 
             {/* ════════ DELIVERY SLOT STEP ════════ */}
             {step === "delivery" && (
-                <div style={{ display: "grid", gridTemplateColumns: "1.4fr 1fr", gap: 40 }}>
+                <div className="checkout-grid" style={{ display: "grid", gridTemplateColumns: "1.4fr 1fr", gap: 40 }}>
                     <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: 16, padding: 28 }}>
                         <h2 style={{ fontSize: 20, fontWeight: 900, color: T.t1, margin: "0 0 8px" }}>🚚 Choose Delivery Slot</h2>
                         <p style={{ fontSize: 13, color: T.t3, margin: "0 0 24px" }}>Select when you'd like to receive your parts</p>
@@ -297,7 +308,7 @@ export function CheckoutPage({ onBack, onOrderPlaced }) {
 
             {/* ════════ PAYMENT STEP ════════ */}
             {step === "payment" && (
-                <div style={{ display: "grid", gridTemplateColumns: "1.4fr 1fr", gap: 40 }}>
+                <div className="checkout-grid" style={{ display: "grid", gridTemplateColumns: "1.4fr 1fr", gap: 40 }}>
                     <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: 16, padding: 28 }}>
                         <h2 style={{ fontSize: 20, fontWeight: 900, color: T.t1, margin: "0 0 24px" }}>💳 Payment Method</h2>
                         <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
@@ -343,7 +354,7 @@ export function CheckoutPage({ onBack, onOrderPlaced }) {
 
             {/* ════════ CONFIRM STEP ════════ */}
             {step === "confirm" && (
-                <div style={{ display: "grid", gridTemplateColumns: "1.4fr 1fr", gap: 40 }}>
+                <div className="checkout-grid" style={{ display: "grid", gridTemplateColumns: "1.4fr 1fr", gap: 40 }}>
                     <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
 
                         {/* Stockout Error */}
@@ -466,22 +477,16 @@ export function CheckoutPage({ onBack, onOrderPlaced }) {
 
             {/* ════════ SUCCESS STEP ════════ */}
             {step === "success" && (
-                <div style={{ textAlign: "center", padding: "60px 20px" }}>
-                    <div style={{ width: 80, height: 80, background: `${T.emerald}22`, borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 24px", fontSize: 40, boxShadow: `0 0 40px ${T.emerald}33` }}>✓</div>
-                    <div style={{ fontSize: 28, fontWeight: 900, color: T.t1, marginBottom: 8 }}>Order Placed Successfully!</div>
-                    <div style={{ fontSize: 15, color: T.t2, marginBottom: 8 }}>
-                        {orderIds.length} shipment{orderIds.length > 1 ? "s" : ""} • {selectedSlot.icon} {selectedSlot.label}
-                    </div>
-                    <div style={{ fontSize: 13, color: T.t3, marginBottom: 24 }}>
-                        Shop will be notified instantly. Delivery partner will be assigned once the order is packed.
-                    </div>
+                <div style={{ textAlign: "center", padding: "60px 24px", animation: "scaleIn 0.4s cubic-bezier(0.16,1,0.3,1) both" }}>
+                    <div style={{ fontSize: 72, marginBottom: 20, animation: "float 3s ease-in-out infinite" }}>🎉</div>
+                    <div style={{ fontSize: 28, fontWeight: 900, color: T.t1, letterSpacing: "-0.5px", marginBottom: 8 }}>Order Placed!</div>
+                    <div style={{ fontSize: 15, color: T.t3, marginBottom: 24 }}>Your parts are on the way</div>
 
-                    {/* Order IDs */}
-                    <div style={{ display: "flex", justifyContent: "center", gap: 12, flexWrap: "wrap", marginBottom: 32 }}>
+                    {/* Order IDs — amber mono pill */}
+                    <div style={{ display: "flex", justifyContent: "center", gap: 12, flexWrap: "wrap", marginBottom: 28 }}>
                         {orderIds.map(id => (
-                            <div key={id} style={{ background: T.card, border: `1px solid ${T.emerald}44`, borderRadius: 10, padding: "12px 20px" }}>
-                                <div style={{ fontSize: 11, color: T.t3, fontWeight: 600, textTransform: "uppercase" }}>Order ID</div>
-                                <div style={{ fontSize: 16, fontWeight: 900, color: T.amber, fontFamily: FONT.mono }}>{id}</div>
+                            <div key={id} style={{ fontFamily: FONT.mono, fontSize: 18, fontWeight: 700, color: T.amber, background: T.amberGlow, border: `1px solid ${T.amber}44`, borderRadius: 10, padding: "12px 28px", display: "inline-block", letterSpacing: "0.05em" }}>
+                                {id}
                             </div>
                         ))}
                     </div>
@@ -494,9 +499,11 @@ export function CheckoutPage({ onBack, onOrderPlaced }) {
                         <div style={{ fontSize: 14, fontWeight: 700, color: T.emerald, marginTop: 12 }}>{selectedSlot.icon} Estimated delivery: {selectedSlot.desc}</div>
                     </div>
 
-                    <div style={{ display: "flex", justifyContent: "center", gap: 16 }}>
-                        <button onClick={() => onOrderPlaced && onOrderPlaced(orderIds)} style={{ background: T.amber, color: "#000", border: "none", borderRadius: 10, padding: "14px 28px", fontSize: 14, fontWeight: 900, cursor: "pointer", boxShadow: `0 6px 20px ${T.amber}44` }}>Track My Orders →</button>
-                        <button onClick={onBack} style={{ background: T.surface, border: `1px solid ${T.border}`, color: T.t2, borderRadius: 10, padding: "14px 28px", fontSize: 14, fontWeight: 700, cursor: "pointer" }}>Continue Shopping</button>
+                    <div style={{ display: "flex", justifyContent: "center", gap: 16, flexWrap: "wrap" }}>
+                        <button onClick={() => onOrderPlaced && onOrderPlaced(orderIds)} style={{ background: T.amber, color: "#000", border: "none", borderRadius: 10, padding: "12px 32px", fontSize: 14, fontWeight: 900, cursor: "pointer", fontFamily: FONT.ui }}>
+                            Track Order →
+                        </button>
+                        <button onClick={onBack} style={{ background: T.surface, border: `1px solid ${T.border}`, color: T.t2, borderRadius: 10, padding: "12px 28px", fontSize: 14, fontWeight: 700, cursor: "pointer" }}>Continue Shopping</button>
                     </div>
                 </div>
             )}

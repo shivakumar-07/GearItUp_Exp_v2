@@ -6,6 +6,8 @@ import { useStore } from "../store";
 
 export function ReportsPage({ movements, products, activeShopId, onPaymentReceipt, toast }) {
     const [view, setView] = useState("overview");
+    const [auditTypeFilter, setAuditTypeFilter] = useState("");
+    const [auditVisible, setAuditVisible] = useState(50);
     const { auditLog } = useStore();
 
     const shopMovements = useMemo(() => movements.filter(m => m.shopId === activeShopId), [movements, activeShopId]);
@@ -183,7 +185,7 @@ export function ReportsPage({ movements, products, activeShopId, onPaymentReceip
             {/* ===== P&L OVERVIEW ===== */}
             {view === "overview" && (
                 <div className="fade-in" style={{ display: "flex", flexDirection: "column", gap: 20 }}>
-                    <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 12 }}>
+                    <div className="kpi-grid-6" style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 12 }}>
                         <StatCard label="Net Sales Revenue" value={fmt(stats.sales)} color={T.emerald} icon="📈" sub={`${stats.units} units sold`} />
                         <StatCard label="Total Purchases (COGS)" value={fmt(stats.purchases)} color={T.sky} icon="📥" />
                         <StatCard label="Gross Profit" value={fmt(stats.pnl)} color={T.amber} icon="💰" sub={`Margin: ${pct(stats.pnl, stats.sales)}`} />
@@ -217,6 +219,44 @@ export function ReportsPage({ movements, products, activeShopId, onPaymentReceip
                         </div>
                     </div>
 
+                    {/* Waterfall Chart */}
+                    <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: 14, padding: 24 }}>
+                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
+                            <div style={{ fontSize: 13, fontWeight: 600, letterSpacing: "1.5px", textTransform: "uppercase", color: T.t3 }}>P&L Waterfall</div>
+                            <button onClick={() => window.print()} style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 8, padding: "6px 14px", color: T.t2, fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: FONT.ui, display: "flex", alignItems: "center", gap: 6, transition: "all 0.15s" }}
+                                onMouseEnter={e => { e.currentTarget.style.borderColor = T.amber; e.currentTarget.style.color = T.amber; }}
+                                onMouseLeave={e => { e.currentTarget.style.borderColor = T.border; e.currentTarget.style.color = T.t2; }}>
+                                🖨 Export PDF
+                            </button>
+                        </div>
+                        {(() => {
+                            const steps = [
+                                { label: "Revenue", value: stats.sales, color: T.amber },
+                                { label: "COGS", value: -stats.purchases, color: T.crimson },
+                                { label: "Gross Profit", value: stats.pnl, color: T.emerald },
+                                { label: "Returns", value: -stats.returns, color: T.crimson },
+                                { label: "Damages", value: -stats.damages, color: T.crimson },
+                                { label: "Net Profit", value: stats.netProfit, color: stats.netProfit >= 0 ? T.emerald : T.crimson },
+                            ];
+                            const maxVal = Math.max(...steps.map(s => Math.abs(s.value)), 1);
+                            return (
+                                <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                                    {steps.map(step => (
+                                        <div key={step.label} style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                                            <div style={{ width: 110, fontSize: 12, color: T.t2, textAlign: "right", flexShrink: 0 }}>{step.label}</div>
+                                            <div style={{ flex: 1, background: T.border, borderRadius: 4, height: 22, position: "relative", overflow: "hidden" }}>
+                                                <div style={{ height: "100%", borderRadius: 4, width: `${(Math.abs(step.value) / maxVal) * 100}%`, background: step.color, opacity: 0.75, transition: "width 0.5s ease" }} />
+                                            </div>
+                                            <div style={{ width: 100, fontFamily: FONT.mono, fontSize: 12, color: step.color, fontWeight: 700, textAlign: "right", flexShrink: 0 }}>
+                                                {step.value < 0 ? `(${fmt(Math.abs(step.value))})` : fmt(step.value)}
+                                            </div>
+                                        </div>
+                                    ))}
+                                </div>
+                            );
+                        })()}
+                    </div>
+
                     {/* Quick KPIs */}
                     <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 12 }}>
                         <StatCard label="Accounts Receivable (Udhaar)" value={fmt(stats.recTotal)} color={T.crimson} icon="📋" sub={`${stats.recList.length} customers owe you`} />
@@ -229,6 +269,29 @@ export function ReportsPage({ movements, products, activeShopId, onPaymentReceip
             {/* ===== GST & TAX ===== */}
             {view === "gst" && (
                 <div className="fade-in" style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+                    {/* GSTR-3B Summary Card Grid */}
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                        <div style={{ fontSize: 13, fontWeight: 600, letterSpacing: "1.5px", textTransform: "uppercase", color: T.t3 }}>GSTR-3B Summary</div>
+                        <button onClick={() => window.print()} style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 8, padding: "6px 14px", color: T.t2, fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: FONT.ui, display: "flex", alignItems: "center", gap: 6, transition: "all 0.15s" }}
+                            onMouseEnter={e => { e.currentTarget.style.borderColor = T.amber; e.currentTarget.style.color = T.amber; }}
+                            onMouseLeave={e => { e.currentTarget.style.borderColor = T.border; e.currentTarget.style.color = T.t2; }}>
+                            🖨 Export PDF
+                        </button>
+                    </div>
+                    <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 14 }}>
+                        {[
+                            { label: "Output Tax (3.1)", sub: "Tax collected on sales", value: stats.outGst, color: T.amber },
+                            { label: "Input Tax Credit (4)", sub: "ITC from purchase invoices", value: stats.inGst, color: T.emerald },
+                            { label: "Net Payable (6)", sub: "Amount due to government", value: Math.max(0, stats.netGst), color: stats.netGst > 0 ? T.crimson : T.emerald },
+                        ].map(c => (
+                            <div key={c.label} style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: 12, padding: "18px 20px" }}>
+                                <div style={{ fontSize: 11, fontWeight: 700, color: T.t3, textTransform: "uppercase", letterSpacing: "1px", marginBottom: 8 }}>{c.label}</div>
+                                <div style={{ fontSize: 24, fontWeight: 900, fontFamily: FONT.mono, color: c.color, marginBottom: 4 }}>{fmt(c.value)}</div>
+                                <div style={{ fontSize: 11, color: T.t3 }}>{c.sub}</div>
+                            </div>
+                        ))}
+                    </div>
+
                     <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: 16, padding: 32 }}>
                         <div style={{ fontSize: 20, fontWeight: 900, color: T.t1, marginBottom: 24 }}>GST Calculation Worksheet</div>
 
@@ -261,7 +324,7 @@ export function ReportsPage({ movements, products, activeShopId, onPaymentReceip
                         </div>
 
                         {/* CGST/SGST Split */}
-                        <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 12, marginTop: 24 }}>
+                        <div className="kpi-grid-6" style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 12, marginTop: 24 }}>
                             <StatCard label="Output CGST" value={fmt(stats.outGst / 2)} color={T.amber} icon="🏛️" />
                             <StatCard label="Output SGST" value={fmt(stats.outGst / 2)} color={T.amber} icon="🏛️" />
                             <StatCard label="Input CGST" value={fmt(stats.inGst / 2)} color={T.sky} icon="📥" />
@@ -330,6 +393,7 @@ export function ReportsPage({ movements, products, activeShopId, onPaymentReceip
                     {hsnBreakdown.length > 0 && (
                         <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: 14, overflow: "hidden" }}>
                             <div style={{ padding: "16px 20px", background: T.surface, borderBottom: `1px solid ${T.border}`, fontSize: 16, fontWeight: 800, color: T.t1 }}>HSN-wise Tax Summary</div>
+                          <div className="table-scroll">
                             <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
                                 <thead>
                                     <tr style={{ borderBottom: `1px solid ${T.border}` }}>
@@ -356,6 +420,7 @@ export function ReportsPage({ movements, products, activeShopId, onPaymentReceip
                                     })}
                                 </tbody>
                             </table>
+                          </div>
                         </div>
                     )}
                 </div>
@@ -364,7 +429,7 @@ export function ReportsPage({ movements, products, activeShopId, onPaymentReceip
             {/* ===== BALANCE SHEET ===== */}
             {view === "balance" && (
                 <div className="fade-in" style={{ display: "flex", flexDirection: "column", gap: 20 }}>
-                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 20 }}>
+                    <div className="bottom-grid-2" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 20 }}>
                         {/* Assets */}
                         <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: 14, padding: 24 }}>
                             <div style={{ fontSize: 18, fontWeight: 900, color: T.emerald, marginBottom: 20 }}>📈 Assets</div>
@@ -448,7 +513,7 @@ export function ReportsPage({ movements, products, activeShopId, onPaymentReceip
             {/* ===== INVENTORY VALUATION ===== */}
             {view === "inventory" && (
                 <div className="fade-in" style={{ display: "flex", flexDirection: "column", gap: 20 }}>
-                    <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 12 }}>
+                    <div className="kpi-grid-6" style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 12 }}>
                         <StatCard label="Inventory at Cost" value={fmt(stats.invValue)} color={T.sky} icon="📦" />
                         <StatCard label="Inventory at Sell Price" value={fmt(stats.invSellValue)} color={T.amber} icon="💰" />
                         <StatCard label="Potential Profit" value={fmt(stats.potentialProfit)} color={T.emerald} icon="📈" sub={`${pct(stats.potentialProfit, stats.invSellValue)} margin`} />
@@ -458,6 +523,7 @@ export function ReportsPage({ movements, products, activeShopId, onPaymentReceip
                     {/* Category-wise breakdown */}
                     <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: 14, overflow: "hidden" }}>
                         <div style={{ padding: "16px 20px", background: T.surface, borderBottom: `1px solid ${T.border}`, fontSize: 16, fontWeight: 800, color: T.t1 }}>Category-wise Inventory Valuation</div>
+                      <div className="table-scroll">
                         <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
                             <thead>
                                 <tr style={{ borderBottom: `1px solid ${T.border}` }}>
@@ -490,6 +556,7 @@ export function ReportsPage({ movements, products, activeShopId, onPaymentReceip
                                 })()}
                             </tbody>
                         </table>
+                      </div>
                     </div>
 
                     {/* Dead Stock */}
@@ -554,33 +621,74 @@ export function ReportsPage({ movements, products, activeShopId, onPaymentReceip
                         🔒 All actions are permanently logged for complete business transparency and accountability.
                     </div>
 
-                    <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: 14, overflow: "hidden" }}>
-                        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
-                            <thead>
-                                <tr style={{ background: T.surface, borderBottom: `1px solid ${T.border}` }}>
-                                    {["Timestamp", "Action", "Entity", "Details"].map(h => (
-                                        <th key={h} style={{ padding: "10px 14px", textAlign: "left", color: T.t3, fontWeight: 600, fontSize: 10, textTransform: "uppercase", fontFamily: FONT.ui }}>{h}</th>
-                                    ))}
-                                </tr>
-                            </thead>
-                            <tbody>
-                                {(auditLog || []).length === 0 ? (
-                                    <tr><td colSpan={4} style={{ padding: 40, textAlign: "center", color: T.t3 }}>No audit entries yet. Actions will be logged as you use the system.</td></tr>
-                                ) : (auditLog || []).slice(0, 100).map((entry, i) => (
-                                    <tr key={entry.id} className="row-hover" style={{ borderBottom: `1px solid ${T.border}` }}>
-                                        <td style={{ padding: "10px 14px", fontFamily: FONT.mono, fontSize: 11, color: T.t3, whiteSpace: "nowrap" }}>{fmtDate(entry.timestamp)}<br />{new Date(entry.timestamp).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}</td>
-                                        <td style={{ padding: "10px 14px" }}>
-                                            <span style={{ background: `${T.amber}18`, color: T.amber, fontSize: 10, padding: "3px 8px", borderRadius: 5, fontWeight: 700, fontFamily: FONT.mono }}>{entry.action}</span>
-                                        </td>
-                                        <td style={{ padding: "10px 14px", fontSize: 12, color: T.t2 }}>
-                                            <span style={{ color: T.t3, fontSize: 10 }}>{entry.entityType}/</span>{entry.entityId}
-                                        </td>
-                                        <td style={{ padding: "10px 14px", fontSize: 12, color: T.t3, maxWidth: 300, overflow: "hidden", textOverflow: "ellipsis" }}>{entry.details}</td>
-                                    </tr>
-                                ))}
-                            </tbody>
-                        </table>
+                    {/* Filter + Export */}
+                    <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
+                        <input
+                            value={auditTypeFilter}
+                            onChange={e => { setAuditTypeFilter(e.target.value); setAuditVisible(50); }}
+                            placeholder="Filter by action type (e.g. SALE, PRODUCT)…"
+                            style={{ flex: 1, background: T.surface, border: `1px solid ${T.border}`, borderRadius: 8, padding: "8px 12px", color: T.t1, fontSize: 13, outline: "none", fontFamily: FONT.ui, transition: "border 0.15s" }}
+                            onFocus={e => { e.target.style.borderColor = T.amber; e.target.style.boxShadow = `0 0 0 3px ${T.amber}22`; }}
+                            onBlur={e => { e.target.style.borderColor = T.border; e.target.style.boxShadow = "none"; }}
+                        />
+                        <button onClick={() => window.print()} style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 8, padding: "8px 14px", color: T.t2, fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: FONT.ui, whiteSpace: "nowrap", transition: "all 0.15s" }}
+                            onMouseEnter={e => { e.currentTarget.style.borderColor = T.amber; e.currentTarget.style.color = T.amber; }}
+                            onMouseLeave={e => { e.currentTarget.style.borderColor = T.border; e.currentTarget.style.color = T.t2; }}>
+                            🖨 Export PDF
+                        </button>
                     </div>
+
+                    {(() => {
+                        const allAudit = (auditLog || []);
+                        const filteredAudit = auditTypeFilter
+                            ? allAudit.filter(e => (e.action || "").toLowerCase().includes(auditTypeFilter.toLowerCase()))
+                            : allAudit;
+                        const visibleAudit = filteredAudit.slice(0, auditVisible);
+                        return (
+                            <>
+                                <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: 14, overflow: "hidden" }}>
+                                  <div className="table-scroll">
+                                    <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+                                        <thead>
+                                            <tr style={{ background: T.surface, borderBottom: `1px solid ${T.border}` }}>
+                                                {["Timestamp", "Action", "Entity", "Details"].map(h => (
+                                                    <th key={h} style={{ padding: "10px 14px", textAlign: "left", color: T.t3, fontWeight: 600, fontSize: 10, textTransform: "uppercase", letterSpacing: "1.2px", fontFamily: FONT.ui }}>{h}</th>
+                                                ))}
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            {filteredAudit.length === 0 ? (
+                                                <tr><td colSpan={4} style={{ padding: 40, textAlign: "center", color: T.t3 }}>
+                                                    {auditTypeFilter ? `No entries matching "${auditTypeFilter}"` : "No audit entries yet."}
+                                                </td></tr>
+                                            ) : visibleAudit.map((entry, i) => (
+                                                <tr key={entry.id || i} className="row-hover" style={{ borderBottom: `1px solid ${T.border}` }}>
+                                                    <td style={{ padding: "10px 14px", fontFamily: FONT.mono, fontSize: 11, color: T.t3, whiteSpace: "nowrap" }}>{fmtDate(entry.timestamp)}<br />{new Date(entry.timestamp).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}</td>
+                                                    <td style={{ padding: "10px 14px" }}>
+                                                        <span style={{ background: `${T.amber}18`, color: T.amber, fontSize: 10, padding: "3px 8px", borderRadius: 5, fontWeight: 700, fontFamily: FONT.mono }}>{entry.action}</span>
+                                                    </td>
+                                                    <td style={{ padding: "10px 14px", fontSize: 12, color: T.t2 }}>
+                                                        <span style={{ color: T.t3, fontSize: 10 }}>{entry.entityType}/</span>{entry.entityId}
+                                                    </td>
+                                                    <td style={{ padding: "10px 14px", fontSize: 12, color: T.t3, maxWidth: 300, overflow: "hidden", textOverflow: "ellipsis" }}>{entry.details}</td>
+                                                </tr>
+                                            ))}
+                                        </tbody>
+                                    </table>
+                                  </div>
+                                </div>
+                                {auditVisible < filteredAudit.length && (
+                                    <div style={{ textAlign: "center", padding: "8px 0" }}>
+                                        <button onClick={() => setAuditVisible(v => v + 50)} style={{ background: "transparent", border: `1px solid ${T.border}`, borderRadius: 8, padding: "9px 24px", color: T.t3, cursor: "pointer", fontSize: 13, fontFamily: FONT.ui, transition: "all 0.15s" }}
+                                            onMouseEnter={e => { e.currentTarget.style.borderColor = T.amber; e.currentTarget.style.color = T.amber; }}
+                                            onMouseLeave={e => { e.currentTarget.style.borderColor = T.border; e.currentTarget.style.color = T.t3; }}>
+                                            Load 50 more ({filteredAudit.length - auditVisible} remaining)
+                                        </button>
+                                    </div>
+                                )}
+                            </>
+                        );
+                    })()}
                 </div>
             )}
         </div>

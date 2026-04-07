@@ -1,8 +1,19 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useRef, useEffect, useContext } from "react";
 import { T, FONT } from "../theme";
 import { useStore } from "../store";
+import { AppCtx } from "../App";
 import { fmt, fmtDateTime, daysAgo, uid } from "../utils";
 import { assignDeliveryPartner } from "../marketplace/api/engine";
+import { Btn } from "../components/ui";
+
+// Helper: get human-friendly label for the next action
+const getNextAction = (status) => {
+    const map = {
+        NEW: "Accept Order", ACCEPTED: "Mark Packed", PACKED: "Dispatch",
+        DISPATCHED: "Mark Delivered", new: "Accept Order", placed: "Accept Order",
+    };
+    return map[status?.toUpperCase?.()] || map[status] || "Advance";
+};
 
 const STATUS_META = {
     NEW: { label: "New Order", icon: "📋", color: T.sky, action: "Accept & Pack", nextStatus: "ACCEPTED" },
@@ -14,13 +25,80 @@ const STATUS_META = {
 };
 
 const TABS = ["all", "NEW", "ACCEPTED", "PACKED", "DISPATCHED", "DELIVERED"];
+const STATUS_PIPELINE = ["NEW", "ACCEPTED", "PACKED", "DISPATCHED", "DELIVERED"];
+
+// Status step indicator component
+function StatusStepper({ currentStatus }) {
+    const currentIdx = STATUS_PIPELINE.indexOf(currentStatus);
+    const isCancelled = currentStatus === "CANCELLED";
+    return (
+        <div style={{ display: "flex", alignItems: "center", gap: 0, padding: "12px 0" }}>
+            {STATUS_PIPELINE.map((status, i) => {
+                const meta = STATUS_META[status];
+                const isComplete = !isCancelled && i <= currentIdx;
+                const isCurrent = !isCancelled && i === currentIdx;
+                return (
+                    <div key={status} style={{ display: "flex", alignItems: "center", flex: i < STATUS_PIPELINE.length - 1 ? 1 : 0 }}>
+                        <div style={{
+                            width: 28, height: 28, borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center",
+                            background: isComplete ? meta.color : T.surface,
+                            border: `2px solid ${isComplete ? meta.color : T.border}`,
+                            fontSize: 12, color: isComplete ? "#000" : T.t4, fontWeight: 800,
+                            boxShadow: isCurrent ? `0 0 12px ${meta.color}66` : "none",
+                            transition: "all 0.2s",
+                        }}>
+                            {isComplete ? meta.icon : i + 1}
+                        </div>
+                        {i < STATUS_PIPELINE.length - 1 && (
+                            <div style={{
+                                flex: 1, height: 2, margin: "0 4px",
+                                background: !isCancelled && i < currentIdx ? STATUS_META[STATUS_PIPELINE[i + 1]]?.color || T.border : T.border,
+                                transition: "background 0.3s",
+                            }} />
+                        )}
+                    </div>
+                );
+            })}
+            {isCancelled && (
+                <div style={{ marginLeft: 12, fontSize: 10, fontWeight: 800, color: T.crimson, background: `${T.crimson}15`, padding: "3px 10px", borderRadius: 6 }}>CANCELLED</div>
+            )}
+        </div>
+    );
+}
 
 export function OrdersPage() {
     const { orders, saveOrders, shops, activeShopId } = useStore();
+    const { toast } = useContext(AppCtx);
     const [activeTab, setActiveTab] = useState("all");
     const [expandedOrder, setExpandedOrder] = useState(null);
+    const [selectedOrders, setSelectedOrders] = useState(new Set());
 
     const safeOrders = orders || [];
+
+    // Poll every 30 seconds for new orders and play a beep
+    const prevOrderCount = useRef(
+        (safeOrders).filter(o => o.shopId === activeShopId && (o.status === "NEW" || o.status === "placed")).length
+    );
+    useEffect(() => {
+        const interval = setInterval(() => {
+            const newCount = (orders || []).filter(o => o.shopId === activeShopId && (o.status === "NEW" || o.status === "placed")).length;
+            if (newCount > prevOrderCount.current) {
+                toast?.(`${newCount - prevOrderCount.current} new order(s) received!`, "success");
+                try {
+                    const ctx = new AudioContext();
+                    const osc = ctx.createOscillator();
+                    const gain = ctx.createGain();
+                    osc.connect(gain); gain.connect(ctx.destination);
+                    osc.frequency.value = 880;
+                    gain.gain.setValueAtTime(0.1, ctx.currentTime);
+                    gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.3);
+                    osc.start(); osc.stop(ctx.currentTime + 0.3);
+                } catch (e) { }
+            }
+            prevOrderCount.current = newCount;
+        }, 30000);
+        return () => clearInterval(interval);
+    }, [orders, activeShopId, toast]);
 
     // Get marketplace orders (they have an address field or COD/Escrow payment)
     const marketplaceOrders = useMemo(() =>
@@ -71,6 +149,31 @@ export function OrdersPage() {
         saveOrders(updated);
     };
 
+    const handleBulkAccept = () => {
+        const newOrders = marketplaceOrders.filter(o => o.status === "NEW");
+        if (newOrders.length === 0) return;
+        const updated = safeOrders.map(o => {
+            if (newOrders.some(n => n.id === o.id)) {
+                return { ...o, status: "ACCEPTED", acceptedAt: Date.now() };
+            }
+            return o;
+        });
+        saveOrders(updated);
+    };
+
+    // Accept only the selected orders (checkbox bulk accept)
+    const handleBulkAcceptSelected = () => {
+        if (selectedOrders.size === 0) return;
+        const count = selectedOrders.size;
+        const updated = safeOrders.map(o => {
+            if (selectedOrders.has(o.id)) return { ...o, status: "ACCEPTED", acceptedAt: Date.now() };
+            return o;
+        });
+        saveOrders(updated);
+        setSelectedOrders(new Set());
+        toast?.(`${count} order${count > 1 ? "s" : ""} accepted`, "success");
+    };
+
     const newOrderCount = statusCounts.NEW || 0;
 
     return (
@@ -81,20 +184,32 @@ export function OrdersPage() {
                     <h1 style={{ fontSize: 24, fontWeight: 900, color: T.t1, margin: 0 }}>📦 Marketplace Orders</h1>
                     <p style={{ fontSize: 14, color: T.t3, margin: "6px 0 0" }}>{marketplaceOrders.length} orders from online customers</p>
                 </div>
-                {newOrderCount > 0 && (
-                    <div style={{
-                        background: `${T.crimson}18`, border: `2px solid ${T.crimson}44`,
-                        borderRadius: 14, padding: "14px 20px",
-                        display: "flex", alignItems: "center", gap: 12,
-                        animation: "pulse 2s infinite"
-                    }}>
-                        <span style={{ fontSize: 20 }}>🔴</span>
-                        <div>
-                            <div style={{ fontSize: 14, fontWeight: 800, color: T.crimson }}>{newOrderCount} order{newOrderCount > 1 ? "s" : ""} waiting!</div>
-                            <div style={{ fontSize: 11, color: T.t3 }}>Accept within 5 mins to maintain rankings</div>
-                        </div>
+                    <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                        {selectedOrders.size > 0 && (
+                            <Btn variant="amber" onClick={handleBulkAcceptSelected}>
+                                Accept All ({selectedOrders.size})
+                            </Btn>
+                        )}
+                        {newOrderCount > 0 && (
+                            <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                                <div style={{
+                                    background: `${T.crimson}18`, border: `2px solid ${T.crimson}44`,
+                                    borderRadius: 14, padding: "14px 20px",
+                                    display: "flex", alignItems: "center", gap: 12,
+                                    animation: "pulse 2s infinite"
+                                }}>
+                                    <span style={{ fontSize: 20 }}>🔴</span>
+                                    <div>
+                                        <div style={{ fontSize: 14, fontWeight: 800, color: T.crimson }}>{newOrderCount} order{newOrderCount > 1 ? "s" : ""} waiting!</div>
+                                        <div style={{ fontSize: 11, color: T.t3 }}>Accept within 5 mins to maintain rankings</div>
+                                    </div>
+                                </div>
+                                {newOrderCount > 1 && (
+                                    <Btn variant="emerald" onClick={handleBulkAccept}>✓ Accept All ({newOrderCount})</Btn>
+                                )}
+                            </div>
+                        )}
                     </div>
-                )}
             </div>
 
             {/* Tabs */}
@@ -167,6 +282,21 @@ export function OrdersPage() {
                                     }}
                                 >
                                     <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
+                                        {isNew && (
+                                            <input
+                                                type="checkbox"
+                                                checked={selectedOrders.has(order.id)}
+                                                onClick={e => e.stopPropagation()}
+                                                onChange={e => {
+                                                    setSelectedOrders(prev => {
+                                                        const s = new Set(prev);
+                                                        e.target.checked ? s.add(order.id) : s.delete(order.id);
+                                                        return s;
+                                                    });
+                                                }}
+                                                style={{ marginRight: 4, width: 16, height: 16, cursor: "pointer", accentColor: T.amber }}
+                                            />
+                                        )}
                                         <div style={{
                                             width: 40, height: 40, borderRadius: 12,
                                             background: `${meta.color}22`, color: meta.color,
@@ -197,6 +327,8 @@ export function OrdersPage() {
                                 {/* Expanded Details */}
                                 {isExpanded && (
                                     <div style={{ borderTop: `1px solid ${T.border}`, padding: "20px 24px" }}>
+                                        {/* Status Step Indicator */}
+                                        <StatusStepper currentStatus={order.status} />
                                         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 24 }}>
                                             {/* Customer Info */}
                                             <div>
@@ -224,30 +356,21 @@ export function OrdersPage() {
                                         {/* Action Buttons */}
                                         <div style={{ display: "flex", gap: 12, marginTop: 20, paddingTop: 16, borderTop: `1px solid ${T.border}` }}>
                                             {meta.action && (
-                                                <button
+                                                <Btn
+                                                    variant="amber"
                                                     onClick={(e) => { e.stopPropagation(); handleAdvanceStatus(order.id); }}
-                                                    style={{
-                                                        flex: 1, background: meta.color, color: "#000",
-                                                        border: "none", borderRadius: 12, padding: "14px 20px",
-                                                        fontSize: 14, fontWeight: 900, cursor: "pointer",
-                                                        boxShadow: `0 4px 16px ${meta.color}44`,
-                                                        display: "flex", alignItems: "center", justifyContent: "center", gap: 8
-                                                    }}
+                                                    style={{ flex: 1 }}
                                                 >
-                                                    {order.status === "NEW" && "✓"} {meta.action}
-                                                </button>
+                                                    {getNextAction(order.status)}
+                                                </Btn>
                                             )}
                                             {(order.status === "NEW" || order.status === "ACCEPTED") && (
-                                                <button
+                                                <Btn
+                                                    variant="danger"
                                                     onClick={(e) => { e.stopPropagation(); handleCancelOrder(order.id); }}
-                                                    style={{
-                                                        background: T.surface, border: `1px solid ${T.crimson}44`,
-                                                        color: T.crimson, borderRadius: 12, padding: "14px 20px",
-                                                        fontSize: 13, fontWeight: 700, cursor: "pointer"
-                                                    }}
                                                 >
                                                     Cancel Order
-                                                </button>
+                                                </Btn>
                                             )}
                                             {order.status === "DELIVERED" && (
                                                 <div style={{

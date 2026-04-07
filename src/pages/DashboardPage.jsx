@@ -23,32 +23,62 @@ export function DashboardPage({ products, movements, orders, activeShopId, onNav
   const curMov = useMemo(() => shopMovements.filter(m => m.date >= cutoff), [shopMovements, cutoff]);
   const prevMov = useMemo(() => shopMovements.filter(m => m.date >= prevCut && m.date < cutoff), [shopMovements, prevCut, cutoff]);
 
-  const curSales = curMov.filter(m => m.type === "SALE");
-  const curPurch = curMov.filter(m => m.type === "PURCHASE");
+  const curSales = useMemo(() => curMov.filter(m => m.type === "SALE"), [curMov]);
+  const curPurch = useMemo(() => curMov.filter(m => m.type === "PURCHASE"), [curMov]);
 
-  const revenue = curSales.reduce((s, m) => s + m.total, 0);
-  const expenses = curPurch.reduce((s, m) => s + m.total, 0);
-  const profit = curSales.reduce((s, m) => s + (m.profit || 0), 0);
-  const units = curSales.reduce((s, m) => s + m.qty, 0);
-  const discounts = curSales.reduce((s, m) => s + (m.discount || 0), 0);
+  const revenue = useMemo(() => curSales.reduce((s, m) => s + m.total, 0), [curSales]);
+  const expenses = useMemo(() => curPurch.reduce((s, m) => s + m.total, 0), [curPurch]);
+  const profit = useMemo(() => curSales.reduce((s, m) => s + (m.profit || 0), 0), [curSales]);
+  const units = useMemo(() => curSales.reduce((s, m) => s + m.qty, 0), [curSales]);
+  const discounts = useMemo(() => curSales.reduce((s, m) => s + (m.discount || 0), 0), [curSales]);
 
-  const prevRev = prevMov.filter(m => m.type === "SALE").reduce((s, m) => s + m.total, 0);
-  const prevProf = prevMov.filter(m => m.type === "SALE").reduce((s, m) => s + (m.profit || 0), 0);
+  const prevRev = useMemo(() => prevMov.filter(m => m.type === "SALE").reduce((s, m) => s + m.total, 0), [prevMov]);
+  const prevProf = useMemo(() => prevMov.filter(m => m.type === "SALE").reduce((s, m) => s + (m.profit || 0), 0), [prevMov]);
 
   const revTrend = prevRev > 0 ? (((revenue - prevRev) / prevRev) * 100).toFixed(0) : null;
   const profTrend = prevProf > 0 ? (((profit - prevProf) / prevProf) * 100).toFixed(0) : null;
 
   // inventory metrics
-  const invValue = shopProducts.reduce((s, p) => s + (p.buyPrice * p.stock), 0);
-  const potProfit = shopProducts.reduce((s, p) => s + ((p.sellPrice - p.buyPrice) * p.stock), 0);
-  const lowProducts = shopProducts.filter(p => stockStatus(p) !== "ok");
+  const invValue = useMemo(() => shopProducts.reduce((s, p) => s + (p.buyPrice * p.stock), 0), [shopProducts]);
+  const potProfit = useMemo(() => shopProducts.reduce((s, p) => s + ((p.sellPrice - p.buyPrice) * p.stock), 0), [shopProducts]);
+  const lowProducts = useMemo(() => shopProducts.filter(p => stockStatus(p) !== "ok"), [shopProducts]);
 
   // Accounts Receivable (Udhaar)
-  const pendingReceivables = shopMovements.filter(m => m.type === "SALE" && m.paymentStatus === "pending").reduce((s, m) => s + m.total, 0);
-  const creditCustomers = new Set(shopMovements.filter(m => m.type === "SALE" && m.paymentStatus === "pending").map(m => m.customerName)).size;
+  const pendingReceivables = useMemo(() => shopMovements.filter(m => m.type === "SALE" && m.paymentStatus === "pending").reduce((s, m) => s + m.total, 0), [shopMovements]);
+  const creditCustomers = useMemo(() => new Set(shopMovements.filter(m => m.type === "SALE" && m.paymentStatus === "pending").map(m => m.customerName)).size, [shopMovements]);
 
   // Pending Online Orders
-  const pendingOrderCount = (orders || []).filter(o => o.shopId === activeShopId && (o.status === "NEW" || o.status === "placed")).length;
+  const pendingOrderCount = useMemo(() => (orders || []).filter(o => o.shopId === activeShopId && (o.status === "NEW" || o.status === "placed")).length, [orders, activeShopId]);
+
+  // Sparkline helper
+  const sparklineData = (movs, type, numDays = 7) => {
+    const points = Array.from({ length: numDays }, (_, i) => {
+      const d = new Date(); d.setDate(d.getDate() - (numDays - 1 - i));
+      const dayStr = d.toDateString();
+      return movs.filter(m => m.type === type && new Date(m.date || m.ts || m.createdAt).toDateString() === dayStr)
+        .reduce((s, m) => s + (m.total || m.totalAmount || 0), 0);
+    });
+    const max = Math.max(...points, 1);
+    const w = 60, h = 24;
+    const pts = points.map((v, i) => `${(i / (numDays - 1)) * w},${h - (v / max) * h}`).join(" ");
+    return pts;
+  };
+
+  // Pending Actions
+  const pendingActions = useMemo(() => [
+    shopProducts.filter(p => (p.stock || 0) <= (p.minStock || 0)).length > 0 && {
+      label: `${shopProducts.filter(p => (p.stock || 0) <= (p.minStock || 0)).length} products below reorder level`,
+      icon: "⚠", color: T.amber, page: "inventory"
+    },
+    (orders || []).filter(o => o.status === "NEW" || o.status === "new").length > 0 && {
+      label: `${(orders || []).filter(o => o.status === "NEW" || o.status === "new").length} new marketplace orders`,
+      icon: "📦", color: T.sky, page: "orders"
+    },
+    (parties || []).filter(p => (p.outstanding || 0) > 0).length > 0 && {
+      label: `${(parties || []).filter(p => (p.outstanding || 0) > 0).length} parties with outstanding dues`,
+      icon: "💰", color: T.crimson, page: "parties"
+    }
+  ].filter(Boolean).slice(0, 3), [shopProducts, orders, parties]);
 
   // per-product stats
   const prodStats = useMemo(() =>
@@ -110,35 +140,66 @@ export function DashboardPage({ products, movements, orders, activeShopId, onNav
       <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
         <span style={{ fontSize: 12, color: T.t3, fontWeight: 600, letterSpacing: "0.06em", textTransform: "uppercase", marginRight: 4, fontFamily: FONT.ui }}>Period:</span>
         {[["7", "7D"], ["30", "30D"], ["90", "3M"], ["180", "6M"], ["365", "1Y"]].map(([v, l]) => (
-          <button key={v} onClick={() => setPeriod(v)} style={{ background: period === v ? T.amber : "transparent", color: period === v ? "#000" : T.t2, border: `1px solid ${period === v ? T.amber : T.border}`, borderRadius: 7, padding: "5px 13px", fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: FONT.ui, transition: "all 0.12s" }}>{l}</button>
+          <Btn key={v} onClick={() => setPeriod(v)}
+            variant={period === v ? "amber" : "ghost"}
+            size="sm"
+            style={{ borderRadius: 20, padding: "4px 14px", fontSize: 12 }}
+          >{l}</Btn>
         ))}
         <span style={{ flex: 1 }} />
 
         {/* Marketplace Sync Status */}
-        <div style={{ background: `${T.emerald}14`, border: `1px solid ${T.emerald}44`, borderRadius: 8, padding: "6px 14px", display: "flex", alignItems: "center", gap: 8 }}>
+        <div className="topbar-secondary" style={{ background: `${T.emerald}14`, border: `1px solid ${T.emerald}44`, borderRadius: 8, padding: "6px 14px", display: "flex", alignItems: "center", gap: 8, flexShrink: 0 }}>
           <div style={{ width: 8, height: 8, borderRadius: "50%", background: T.emerald, boxShadow: `0 0 8px ${T.emerald}` }} className="pulse" />
-          <span style={{ fontSize: 13, color: T.emerald, fontWeight: 800 }}>Marketplace Sync Active</span>
-          <span style={{ fontSize: 11, color: T.t3, marginLeft: 8 }}>Rating: ⭐ 4.9 (Top Tier)</span>
+          <span style={{ fontSize: 13, color: T.emerald, fontWeight: 800 }}>Live Sync</span>
         </div>
       </div>
 
       {/* KPIs */}
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 12 }}>
-        <StatCard label="Revenue" value={fmt(revenue)} icon="💰" color={T.amber} trend={revTrend} sub="Total sales amount" glow="amber" />
-        <StatCard label="Profit" value={fmt(profit)} icon="📈" color={T.emerald} trend={profTrend} sub={`${pct(profit, revenue)} margin`} glow="emerald" />
-        <StatCard label="Purchases" value={fmt(expenses)} icon="🛒" color={T.sky} sub={`${curPurch.length} entries`} />
-        <StatCard label="Units Sold" value={fmtN(units)} icon="📦" color={T.violet} sub={`${curSales.length} transactions`} />
-        <StatCard label="Udhaar (Receivables)" value={fmt(pendingReceivables)} icon="📋" color={T.crimson} sub={`${creditCustomers} customers owe you`} glow={pendingReceivables > 0 ? "crimson" : undefined} />
-        <StatCard label="Online Orders" value={String(pendingOrderCount)} icon="🌐" color={T.sky} sub={pendingOrderCount > 0 ? "Requires action" : "All clear"} glow={pendingOrderCount > 0 ? "sky" : undefined} />
+      <div className="kpi-grid-6" style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 12 }}>
+        {[
+          { label: "Revenue", value: fmt(revenue), icon: "💰", color: T.amber, trend: revTrend, sub: "Total sales amount", glow: "amber", sparkType: "SALE" },
+          { label: "Profit", value: fmt(profit), icon: "📈", color: T.emerald, trend: profTrend, sub: `${pct(profit, revenue)} margin`, glow: "emerald", sparkType: "SALE" },
+          { label: "Purchases", value: fmt(expenses), icon: "🛒", color: T.sky, sub: `${curPurch.length} entries`, sparkType: "PURCHASE" },
+          { label: "Units Sold", value: fmtN(units), icon: "📦", color: T.violet, sub: `${curSales.length} transactions`, sparkType: "SALE" },
+          { label: "Udhaar (Receivables)", value: fmt(pendingReceivables), icon: "📋", color: T.crimson, sub: `${creditCustomers} customers owe you`, glow: pendingReceivables > 0 ? "crimson" : undefined, sparkType: null },
+          { label: "Online Orders", value: String(pendingOrderCount), icon: "🌐", color: T.sky, sub: pendingOrderCount > 0 ? "Requires action" : "All clear", glow: pendingOrderCount > 0 ? "sky" : undefined, sparkType: null },
+        ].map(kpi => (
+          <div key={kpi.label} style={{ position: "relative" }}>
+            <StatCard label={kpi.label} value={kpi.value} icon={kpi.icon} color={kpi.color} trend={kpi.trend} sub={kpi.sub} glow={kpi.glow} />
+            {kpi.sparkType && (
+              <div style={{ position: "absolute", bottom: 12, right: 14, opacity: 0.7 }}>
+                <svg width="60" height="24" viewBox="0 0 60 24" style={{ display: "block" }}>
+                  <polyline points={sparklineData(shopMovements, kpi.sparkType)} fill="none" stroke={kpi.color} strokeWidth="1.5" strokeLinejoin="round" strokeLinecap="round" />
+                </svg>
+              </div>
+            )}
+          </div>
+        ))}
       </div>
+
+      {/* Pending Actions */}
+      {pendingActions.length > 0 && (
+        <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: 12, padding: "14px 18px" }}>
+          <div style={{ fontSize: 11, fontWeight: 600, letterSpacing: "1.2px", textTransform: "uppercase", color: T.t3, marginBottom: 10 }}>Pending Actions</div>
+          {pendingActions.map((a, i) => (
+            <div key={i} onClick={() => onNavigate(a.page)} style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 10px", borderRadius: 8, cursor: "pointer", marginBottom: 4, transition: "background 0.15s" }}
+              className="row-hover">
+              <span style={{ fontSize: 16 }}>{a.icon}</span>
+              <span style={{ fontSize: 13, color: T.t2, flex: 1 }}>{a.label}</span>
+              <span style={{ fontSize: 11, color: a.color, fontWeight: 700 }}>View →</span>
+            </div>
+          ))}
+        </div>
+      )}
 
       {/* TREND CHART */}
       <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: 14, padding: "20px 20px 12px" }}>
-        <div style={{ fontSize: 16, fontWeight: 800, color: T.t1, marginBottom: 16, letterSpacing: "-0.01em" }}>Revenue, Profit & Expenses — {days}-Day Trend</div>
+        <div style={{ fontSize: 13, fontWeight: 600, letterSpacing: "1.5px", textTransform: "uppercase", color: T.t3, marginBottom: 16 }}>Revenue, Profit & Expenses — {days}-Day Trend</div>
         <ResponsiveContainer width="100%" height={210}>
           <AreaChart data={chartData}>
             <defs>
-              {[[T.amber, "a"], [T.emerald, "e"], [T.sky, "s"]].map(([c, id]) => (
+              {[[T.amber, "a"], [T.emerald, "e"], [T.crimson, "c"]].map(([c, id]) => (
                 <linearGradient key={id} id={`g${id}`} x1="0" y1="0" x2="0" y2="1">
                   <stop offset="0%" stopColor={c} stopOpacity={0.25} /><stop offset="100%" stopColor={c} stopOpacity={0} />
                 </linearGradient>
@@ -151,7 +212,7 @@ export function DashboardPage({ products, movements, orders, activeShopId, onNav
             <Legend wrapperStyle={{ fontSize: 12, fontFamily: FONT.ui, paddingTop: 12 }} />
             <Area type="monotone" dataKey="Revenue" stroke={T.amber} fill="url(#ga)" strokeWidth={2} dot={false} />
             <Area type="monotone" dataKey="Profit" stroke={T.emerald} fill="url(#ge)" strokeWidth={2} dot={false} />
-            <Area type="monotone" dataKey="Expenses" stroke={T.sky} fill="url(#gs)" strokeWidth={2} dot={false} strokeDasharray="5 3" />
+            <Area type="monotone" dataKey="Expenses" stroke={T.crimson} fill="url(#gc)" strokeWidth={2} dot={false} strokeDasharray="5 3" />
           </AreaChart>
         </ResponsiveContainer>
       </div>
@@ -159,9 +220,9 @@ export function DashboardPage({ products, movements, orders, activeShopId, onNav
       {/* PROFIT INTELLIGENCE TABLE */}
       <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: 14, padding: 20 }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
-          <div style={{ fontSize: 16, fontWeight: 800, color: T.t1, letterSpacing: "-0.01em" }}>💡 Product Profit Intelligence</div>
-          <div style={{ display: "flex", gap: 5 }}>
-            {[["unit_profit", "Profit/Unit"], ["margin", "Margin%"], ["total_profit", "Total Profit"], ["revenue", "Revenue"]].map(([v, l]) => (
+          <div style={{ fontSize: 13, fontWeight: 600, letterSpacing: "1.5px", textTransform: "uppercase", color: T.t3 }}>Product Profit Intelligence</div>
+          <div style={{ display: "flex", gap: 5, flexWrap: "wrap" }}>
+            {[["unit_profit", "Profit/U"], ["margin", "Margin%"], ["total_profit", "Total"], ["revenue", "Revenue"]].map(([v, l]) => (
               <button key={v} onClick={() => setProfitView(v)} style={{ background: profitView === v ? T.amber : "transparent", color: profitView === v ? "#000" : T.t2, border: `1px solid ${profitView === v ? T.amber : T.border}`, borderRadius: 6, padding: "5px 10px", fontSize: 11, fontWeight: 700, cursor: "pointer", fontFamily: FONT.ui }}>{l}</button>
             ))}
           </div>
@@ -176,7 +237,9 @@ export function DashboardPage({ products, movements, orders, activeShopId, onNav
               </tr>
             </thead>
             <tbody>
-              {sortedProds.map((p, i) => {
+              {(() => {
+                const maxRevenue = Math.max(...sortedProds.map(p => p.revP), 1);
+                return sortedProds.map((p, i) => {
                 const sig = signal(p);
                 return (
                   <tr key={p.id} className="row-hover" style={{ borderBottom: `1px solid ${T.border}`, background: T.card }}>
@@ -185,6 +248,9 @@ export function DashboardPage({ products, movements, orders, activeShopId, onNav
                       <div style={{ fontWeight: 700, color: T.t1, fontSize: 13, display: "flex", gap: 6, alignItems: "center" }}>
                         <span>{p.image}</span>
                         <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.name}</span>
+                      </div>
+                      <div style={{ height: 3, background: `${T.amber}33`, borderRadius: 2, marginTop: 4 }}>
+                        <div style={{ height: "100%", background: T.amber, borderRadius: 2, width: `${Math.min(100, (p.revP / Math.max(...sortedProds.map(x => x.revP), 1)) * 100)}%`, opacity: 0.6 }} />
                       </div>
                     </td>
                     <td style={{ padding: "10px 12px" }}><span style={{ background: `${T.amber}14`, color: T.amber, fontSize: 10, padding: "2px 7px", borderRadius: 5, fontWeight: 700 }}>{p.category}</span></td>
@@ -201,18 +267,19 @@ export function DashboardPage({ products, movements, orders, activeShopId, onNav
                     </td>
                   </tr>
                 );
-              })}
+              });
+              })()}
             </tbody>
           </table>
         </div>
       </div>
 
       {/* BOTTOM ROW */}
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
+      <div className="bottom-grid-2" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
         {/* Category Breakdown */}
         {catPie.length > 0 && (
           <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: 14, padding: 20 }}>
-            <div style={{ fontSize: 15, fontWeight: 800, color: T.t1, marginBottom: 14 }}>Sales by Category</div>
+            <div style={{ fontSize: 13, fontWeight: 600, letterSpacing: "1.5px", textTransform: "uppercase", color: T.t3, marginBottom: 14 }}>Sales by Category</div>
             <div style={{ display: "flex", gap: 16, alignItems: "center" }}>
               <ResponsiveContainer width={140} height={140}>
                 <PieChart>
@@ -239,7 +306,7 @@ export function DashboardPage({ products, movements, orders, activeShopId, onNav
 
         {/* Key Metrics */}
         <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: 14, padding: 20 }}>
-          <div style={{ fontSize: 15, fontWeight: 800, color: T.t1, marginBottom: 14 }}>Key Business Metrics</div>
+          <div style={{ fontSize: 13, fontWeight: 600, letterSpacing: "1.5px", textTransform: "uppercase", color: T.t3, marginBottom: 14 }}>Key Business Metrics</div>
           {[
             { label: "Inventory Value (Cost)", value: fmt(invValue), color: T.sky, icon: "📦" },
             { label: "Potential Profit in Stock", value: fmt(potProfit), color: T.emerald, icon: "💰" },
@@ -406,7 +473,7 @@ export function DashboardPage({ products, movements, orders, activeShopId, onNav
         {/* Party Outstanding Summary */}
         <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: 14, padding: 20 }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
-            <div style={{ fontSize: 15, fontWeight: 800, color: T.t1 }}>👥 Party Outstanding</div>
+            <div style={{ fontSize: 13, fontWeight: 600, letterSpacing: "1.5px", textTransform: "uppercase", color: T.t3 }}>Party Outstanding</div>
             <Btn size="xs" variant="subtle" onClick={() => onNavigate("parties")}>View All →</Btn>
           </div>
           {(() => {

@@ -1,12 +1,103 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import { T, FONT } from "../theme";
 import { fmt, fmtDate, daysAgo, uid, JOB_STATUS } from "../utils";
 import { Btn, Input, Select, Modal, Field, Divider } from "../components/ui";
+
+const STATUS_COLS = ["Draft", "Diagnosed", "In Progress", "Waiting Parts", "Ready", "Invoiced"];
+
+// Map display STATUS_COLS names → internal JOB_STATUS keys for card filtering
+const STATUS_COL_KEY_MAP = {
+    "Draft": "draft",
+    "Diagnosed": "estimated",
+    "In Progress": "in_progress",
+    "Waiting Parts": "approved",
+    "Ready": "completed",
+    "Invoiced": "invoiced",
+};
+
+function JobKanbanCard({ job, onSelect, onAdvance }) {
+    const [now, setNow] = useState(Date.now());
+    useEffect(() => {
+        if (!job.startedAt) return;
+        const t = setInterval(() => setNow(Date.now()), 30000);
+        return () => clearInterval(t);
+    }, [job.startedAt]);
+    const elapsed = job.startedAt ? Math.floor((now - job.startedAt) / 60000) : null;
+    const checklistDone = (job.checklist || []).filter(c => c.status === "done").length;
+    const checklistTotal = (job.checklist || []).length;
+    return (
+        <div onClick={() => onSelect(job)} style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: 10, padding: "12px 14px", cursor: "pointer", transition: "all 0.15s" }} className="card-hover">
+            <div style={{ fontSize: 13, fontWeight: 700, color: T.t1, marginBottom: 4 }}>{job.customerName || job.jobNumber || "Walk-in"}</div>
+            <div style={{ fontSize: 11, color: T.amber, fontFamily: FONT.mono, marginBottom: 6 }}>{job.vehicleReg || job.jobNumber || "—"}</div>
+            {(job.estimatedAmount || 0) > 0 && (
+                <div style={{ fontSize: 12, color: T.emerald, fontFamily: FONT.mono, marginBottom: 6 }}>{fmt(job.estimatedAmount)}</div>
+            )}
+            {elapsed !== null && (
+                <div style={{ fontSize: 11, color: T.sky }}>⏱ {elapsed}m elapsed</div>
+            )}
+            {checklistTotal > 0 && (
+                <div style={{ marginTop: 8 }}>
+                    <div style={{ height: 3, background: T.border, borderRadius: 2 }}>
+                        <div style={{ height: "100%", background: T.emerald, borderRadius: 2, width: `${(checklistDone / checklistTotal) * 100}%` }} />
+                    </div>
+                    <div style={{ fontSize: 10, color: T.t3, marginTop: 3 }}>{checklistDone}/{checklistTotal} tasks</div>
+                </div>
+            )}
+            <div style={{ marginTop: 8 }} onClick={e => e.stopPropagation()}>
+                <Btn size="sm" variant="ghost" onClick={(e) => onAdvance(job, e)} style={{ fontSize: 10, padding: "3px 8px" }}>Advance →</Btn>
+            </div>
+        </div>
+    );
+}
 
 export function WorkshopPage({ jobCards, vehicles, parties, products, activeShopId, onSaveJobCard, toast }) {
     const [filter, setFilter] = useState("all");
     const [expandedId, setExpandedId] = useState(null);
     const [showCreateModal, setShowCreateModal] = useState(false);
+    const [viewMode, setViewMode] = useState("list"); // list | kanban
+    const [now, setNow] = useState(Date.now());
+    useEffect(() => {
+        const t = setInterval(() => setNow(Date.now()), 30000); // tick every 30s for live elapsed
+        return () => clearInterval(t);
+    }, []);
+
+    // Kanban: clicking a card switches to list view and expands that card
+    const setSelectedJob = (job) => {
+        setViewMode("list");
+        setExpandedId(job.id);
+    };
+
+    const handleAdvanceStatus = (job, e) => {
+        e?.stopPropagation();
+        // Find current column by internal status key
+        const internalStatus = job.status || "draft";
+        // Map internal key to display col
+        const displayEntry = Object.entries(STATUS_COL_KEY_MAP).find(([, v]) => v === internalStatus);
+        const currentCol = displayEntry ? displayEntry[0] : "Draft";
+        const idx = STATUS_COLS.indexOf(currentCol);
+        if (idx >= STATUS_COLS.length - 1) {
+            toast?.("Job is already completed/invoiced", "info");
+            return;
+        }
+        const nextDisplayStatus = STATUS_COLS[idx + 1];
+        if (!window.confirm(`Move "${job.customerName || job.jobNumber || "this job"}" from "${currentCol}" → "${nextDisplayStatus}"?`)) return;
+        const nextInternalStatus = STATUS_COL_KEY_MAP[nextDisplayStatus];
+        onSaveJobCard?.({
+            ...job,
+            status: nextInternalStatus,
+            ...(nextInternalStatus === "in_progress" && !job.startedAt ? { startedAt: Date.now() } : {}),
+        });
+        toast?.(`Job moved to "${nextDisplayStatus}"`, "success");
+    };
+
+    // Time tracking helper — uses live `now` so the display updates every 30s
+    const getElapsedHours = (job) => {
+        if (!job.startedAt) return null;
+        const end = job.completedAt || now;
+        const hrs = (end - job.startedAt) / 3600000;
+        if (hrs < 1) return `${Math.floor(hrs * 60)}m`;
+        return `${hrs.toFixed(1)}h`;
+    };
 
     const shopJobs = useMemo(() => (jobCards || []).filter(j => j.shopId === activeShopId), [jobCards, activeShopId]);
     const shopVehicles = useMemo(() => (vehicles || []).filter(v => v.shopId === activeShopId), [vehicles, activeShopId]);
@@ -90,13 +181,55 @@ export function WorkshopPage({ jobCards, vehicles, parties, products, activeShop
                     )
                 ))}
                 <div style={{ flex: 1 }} />
+                <div style={{ display: "flex", background: T.surface, borderRadius: 8, padding: 2, border: `1px solid ${T.border}` }}>
+                    {["list", "kanban"].map(m => (
+                        <button key={m} onClick={() => setViewMode(m)} style={{
+                            padding: "5px 12px", borderRadius: 6, border: "none", cursor: "pointer",
+                            background: viewMode === m ? T.amber : "transparent",
+                            color: viewMode === m ? "#000" : T.t3,
+                            fontWeight: viewMode === m ? 700 : 500,
+                            fontSize: 11, fontFamily: FONT.ui, transition: "all 0.15s",
+                        }}>{m === "list" ? "☰ List" : "⊞ Board"}</button>
+                    ))}
+                </div>
                 <Btn size="sm" onClick={() => setShowCreateModal(true)}>🔧 New Job Card</Btn>
             </div>
 
-            {/* Job Cards List */}
+            {/* Kanban Board View */}
+            {viewMode === "kanban" && (
+                <div style={{ display: "flex", gap: 16, overflowX: "auto", paddingBottom: 12 }}>
+                    {STATUS_COLS.map(status => {
+                        const internalKey = STATUS_COL_KEY_MAP[status];
+                        const colCards = shopJobs.filter(j => (j.status || "draft") === internalKey);
+                        return (
+                            <div key={status} style={{ minWidth: 260, flexShrink: 0, background: T.surface, borderRadius: 12, border: `1px solid ${T.border}`, overflow: "hidden" }}>
+                                <div style={{ padding: "10px 14px", borderBottom: `1px solid ${T.border}`, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                                    <span style={{ fontSize: 12, fontWeight: 700, color: T.t2, textTransform: "uppercase", letterSpacing: "0.08em" }}>{status}</span>
+                                    <span style={{ background: T.card, borderRadius: 99, padding: "2px 8px", fontSize: 11, color: T.t3, fontWeight: 700 }}>{colCards.length}</span>
+                                </div>
+                                <div style={{ padding: 10, display: "flex", flexDirection: "column", gap: 8, minHeight: 120, maxHeight: "calc(100vh - 280px)", overflowY: "auto" }}>
+                                    {colCards.map(job => (
+                                        <JobKanbanCard key={job.id} job={job} onSelect={setSelectedJob} onAdvance={handleAdvanceStatus} />
+                                    ))}
+                                    {colCards.length === 0 && (
+                                        <div style={{ textAlign: "center", padding: "20px 10px", color: T.t4, fontSize: 12 }}>Empty</div>
+                                    )}
+                                </div>
+                            </div>
+                        );
+                    })}
+                </div>
+            )}
+
+            {/* Job Cards List View */}
+            {viewMode === "list" && (
             <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
                 {filtered.length === 0 && (
-                    <div style={{ textAlign: "center", padding: 48, color: T.t3, fontSize: 14 }}>No job cards match this filter.</div>
+                    <div style={{ textAlign: "center", padding: 48 }}>
+                        <div style={{ fontSize: 48, opacity: 0.3, marginBottom: 12 }}>🔧</div>
+                        <div style={{ fontSize: 14, fontWeight: 600, color: T.t2, marginBottom: 4 }}>No job cards match this filter</div>
+                        <div style={{ fontSize: 12, color: T.t3 }}>Create a new job card to get started</div>
+                    </div>
                 )}
                 {filtered.map(job => {
                     const vehicle = getVehicle(job.vehicleId);
@@ -128,6 +261,13 @@ export function WorkshopPage({ jobCards, vehicles, parties, products, activeShop
                                     <div style={{ fontSize: 11, color: T.t3 }}>Estimated</div>
                                     <div style={{ fontSize: 18, fontWeight: 900, color: T.amber, fontFamily: FONT.mono }}>{fmt(job.estimatedAmount || 0)}</div>
                                 </div>
+                                {/* Time tracking */}
+                                {getElapsedHours(job) && (
+                                    <div style={{ textAlign: "right" }}>
+                                        <div style={{ fontSize: 11, color: T.t3 }}>Elapsed</div>
+                                        <div style={{ fontSize: 14, fontWeight: 700, color: T.sky, fontFamily: FONT.mono }}>⏱ {getElapsedHours(job)}</div>
+                                    </div>
+                                )}
                                 <div style={{ textAlign: "right" }}>
                                     <div style={{ fontSize: 11, color: T.t3 }}>Checklist</div>
                                     <div style={{ fontSize: 14, fontWeight: 700, color: checklistDone === checklistTotal ? T.emerald : T.t2, fontFamily: FONT.mono }}>{checklistDone}/{checklistTotal}</div>
@@ -227,6 +367,7 @@ export function WorkshopPage({ jobCards, vehicles, parties, products, activeShop
                     );
                 })}
             </div>
+            )}
 
             {/* Create Job Card Modal */}
             <JobCardCreateModal

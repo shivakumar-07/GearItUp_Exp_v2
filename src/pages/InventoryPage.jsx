@@ -17,6 +17,8 @@ export function InventoryPage({ products, movements, activeShopId, onAdd, onEdit
     const [purchP, setPurchP] = useState(null);
     const [adjP, setAdjP] = useState(null);
     const [expandedId, setExpandedId] = useState(null);
+    const [showVehicleFilter, setShowVehicleFilter] = useState(false);
+    const [visibleCount, setVisibleCount] = useState(50);
     // Vehicle selection state: Brand → Model → Year
     const [selBrand, setSelBrand] = useState("");
     const [selModel, setSelModel] = useState("");
@@ -59,6 +61,18 @@ export function InventoryPage({ products, movements, activeShopId, onAdd, onEdit
         });
     }, [shopProducts, cat, statusF, search, sortBy, vehicleMatchStr]);
 
+    // Last 7-day sales count per product
+    const sevenDayCutoff = Date.now() - 7 * 86400000;
+    const salesLast7d = useMemo(() => {
+        const map = {};
+        (movements || []).forEach(m => {
+            if (m.type === "SALE" && m.shopId === activeShopId && m.date >= sevenDayCutoff) {
+                map[m.productId] = (map[m.productId] || 0) + m.qty;
+            }
+        });
+        return map;
+    }, [movements, activeShopId, sevenDayCutoff]);
+
     const counts = {
         out: shopProducts.filter(p => p.stock <= 0).length,
         low: shopProducts.filter(p => p.stock > 0 && p.stock < p.minStock).length,
@@ -96,59 +110,75 @@ export function InventoryPage({ products, movements, activeShopId, onAdd, onEdit
     return (
         <div className="page-in" style={{ display: "flex", flexDirection: "column", gap: 16 }}>
             {/* 🚗 Vehicle Selector Bar */}
-            <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: 14, padding: "14px 20px", display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
-                <div style={{ fontSize: 13, fontWeight: 800, color: T.t1, display: "flex", alignItems: "center", gap: 6, whiteSpace: "nowrap" }}>
-                    <span style={{ fontSize: 18 }}>🚗</span> Find Parts for Vehicle
+            <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: 14, padding: "12px 16px" }}>
+                {/* Pill trigger row */}
+                <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+                    {vehicleMatchStr ? (
+                        <button onClick={() => { setSelBrand(""); setSelModel(""); setSelYear(""); setShowVehicleFilter(false); }}
+                            style={{ display: "flex", alignItems: "center", gap: 7, padding: "6px 14px", borderRadius: 20, border: `1px solid ${T.amber}`, background: T.amberGlow, color: T.amber, fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: FONT.ui, transition: "all 0.15s ease" }}>
+                            🚗 {vehicleMatchStr}{selYear ? ` ${selYear}` : ""} <span style={{ fontSize: 14, lineHeight: 1 }}>×</span>
+                        </button>
+                    ) : (
+                        <button onClick={() => setShowVehicleFilter(v => !v)}
+                            style={{ display: "flex", alignItems: "center", gap: 7, padding: "6px 14px", borderRadius: 20, border: `1px solid ${showVehicleFilter ? T.amber : T.border}`, background: showVehicleFilter ? T.amberSoft : "transparent", color: showVehicleFilter ? T.amber : T.t2, fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: FONT.ui, transition: "all 0.15s ease" }}>
+                            🚗 Filter by Vehicle {showVehicleFilter ? "▲" : "▼"}
+                        </button>
+                    )}
+                    <div style={{ flex: 1 }} />
+                    <div style={{ fontSize: 11, color: T.t4 }}>{MANUFACTURERS.length} brands · {filtered.length} parts found</div>
                 </div>
 
-                {/* Brand */}
-                <select value={selBrand} onChange={e => { setSelBrand(e.target.value); setSelModel(""); setSelYear(""); }}
-                    style={{ background: T.surface, border: `1px solid ${selBrand ? T.amber + "66" : T.border}`, borderRadius: 8, padding: "8px 12px", color: selBrand ? T.t1 : T.t3, fontSize: 12, fontWeight: 600, fontFamily: FONT.ui, cursor: "pointer", minWidth: 160, outline: "none" }}>
-                    <option value="">Select Brand</option>
-                    {MANUFACTURERS.map(m => <option key={m.id} value={m.id}>{m.logo} {m.name}</option>)}
-                </select>
+                {/* Collapsible dropdowns panel */}
+                {showVehicleFilter && !vehicleMatchStr && (
+                    <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", marginTop: 12, paddingTop: 12, borderTop: `1px solid ${T.border}`, animation: "fadeIn 0.15s ease" }}>
+                        {/* Brand */}
+                        <select value={selBrand} onChange={e => { setSelBrand(e.target.value); setSelModel(""); setSelYear(""); }}
+                            style={{ background: T.surface, border: `1px solid ${selBrand ? T.amber + "66" : T.border}`, borderRadius: 8, padding: "7px 12px", color: selBrand ? T.t1 : T.t3, fontSize: 12, fontWeight: 600, fontFamily: FONT.ui, cursor: "pointer", minWidth: 150, outline: "none" }}>
+                            <option value="">Select Brand</option>
+                            {MANUFACTURERS.map(m => <option key={m.id} value={m.id}>{m.logo} {m.name}</option>)}
+                        </select>
 
-                {/* Model — only after Brand */}
-                {selBrand && (
-                    <select value={selModel} onChange={e => { setSelModel(e.target.value); setSelYear(""); }}
-                        style={{ background: T.surface, border: `1px solid ${selModel ? T.amber + "66" : T.border}`, borderRadius: 8, padding: "8px 12px", color: selModel ? T.t1 : T.t3, fontSize: 12, fontWeight: 600, fontFamily: FONT.ui, cursor: "pointer", minWidth: 160, outline: "none" }}>
-                        <option value="">Select Model</option>
-                        {brandModels.map(m => <option key={m.id} value={m.id}>{m.name}</option>)}
-                    </select>
+                        {/* Model — only after Brand */}
+                        {selBrand && (
+                            <select value={selModel} onChange={e => { setSelModel(e.target.value); setSelYear(""); }}
+                                style={{ background: T.surface, border: `1px solid ${selModel ? T.amber + "66" : T.border}`, borderRadius: 8, padding: "7px 12px", color: selModel ? T.t1 : T.t3, fontSize: 12, fontWeight: 600, fontFamily: FONT.ui, cursor: "pointer", minWidth: 150, outline: "none" }}>
+                                <option value="">Select Model</option>
+                                {brandModels.map(m => <option key={m.id} value={m.id}>{m.name}</option>)}
+                            </select>
+                        )}
+
+                        {/* Year — only after Brand + Model */}
+                        {selBrand && selModel && (
+                            <select value={selYear} onChange={e => setSelYear(e.target.value)}
+                                style={{ background: T.surface, border: `1px solid ${selYear ? T.amber + "66" : T.border}`, borderRadius: 8, padding: "7px 12px", color: selYear ? T.t1 : T.t3, fontSize: 12, fontWeight: 600, fontFamily: FONT.ui, cursor: "pointer", minWidth: 90, outline: "none" }}>
+                                <option value="">Year</option>
+                                {modelYears.map(y => <option key={y} value={y}>{y}</option>)}
+                            </select>
+                        )}
+
+                        {selBrand && (
+                            <button onClick={() => { setSelBrand(""); setSelModel(""); setSelYear(""); }}
+                                style={{ background: "transparent", border: `1px solid ${T.border}`, borderRadius: 8, padding: "7px 12px", color: T.t3, fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: FONT.ui }}>
+                                ✕ Clear
+                            </button>
+                        )}
+                    </div>
                 )}
-
-                {/* Year — only after Brand + Model */}
-                {selBrand && selModel && (
-                    <select value={selYear} onChange={e => setSelYear(e.target.value)}
-                        style={{ background: T.surface, border: `1px solid ${selYear ? T.amber + "66" : T.border}`, borderRadius: 8, padding: "8px 12px", color: selYear ? T.t1 : T.t3, fontSize: 12, fontWeight: 600, fontFamily: FONT.ui, cursor: "pointer", minWidth: 100, outline: "none" }}>
-                        <option value="">Year</option>
-                        {modelYears.map(y => <option key={y} value={y}>{y}</option>)}
-                    </select>
-                )}
-
-                {/* Active Filter Badge + Clear */}
-                {vehicleMatchStr && (
-                    <>
-                        <div style={{ background: T.amberGlow, border: `1px solid ${T.amber}44`, borderRadius: 8, padding: "6px 14px", display: "flex", alignItems: "center", gap: 8 }}>
-                            <span style={{ fontSize: 12, fontWeight: 700, color: T.amber }}>✅ Filtering: {vehicleMatchStr}{selYear ? ` (${selYear})` : ""}</span>
-                        </div>
-                        <button onClick={() => { setSelBrand(""); setSelModel(""); setSelYear(""); }}
-                            style={{ background: "transparent", border: `1px solid ${T.border}`, borderRadius: 8, padding: "6px 14px", color: T.t3, fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: FONT.ui }}>
-                            ✕ Clear
-                        </button>
-                    </>
-                )}
-
-                <div style={{ flex: 1 }} />
-                <div style={{ fontSize: 11, color: T.t4 }}>{MANUFACTURERS.length} brands · {filtered.length} parts found</div>
             </div>
 
             {/* Toolbar */}
             <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
-                <div style={{ flex: 1, minWidth: 220 }}>
+                <div style={{ flex: 1, minWidth: 220, position: "relative" }}>
                     <Input value={search} onChange={setSearch} placeholder="Search name, SKU, brand, supplier…" icon="🔍" />
+                    {search && (
+                        <button onClick={() => setSearch("")} style={{
+                            position: "absolute", right: 10, top: "50%", transform: "translateY(-50%)",
+                            background: T.surface, border: `1px solid ${T.border}`, borderRadius: 6,
+                            width: 22, height: 22, display: "flex", alignItems: "center", justifyContent: "center",
+                            cursor: "pointer", color: T.t3, fontSize: 12, fontFamily: FONT.ui,
+                        }}>×</button>
+                    )}
                 </div>
-                <Select value={cat} onChange={setCat} style={{ width: 160 }} options={["All", ...CATEGORIES].map(c => ({ value: c, label: c === "All" ? "All Categories" : c }))} />
                 <Select value={sortBy} onChange={setSortBy} style={{ width: 180 }} options={[
                     { value: "name", label: "Sort: Name" },
                     { value: "profit", label: "Sort: Profit/unit ↓" },
@@ -157,11 +187,6 @@ export function InventoryPage({ products, movements, activeShopId, onAdd, onEdit
                     { value: "value", label: "Sort: Inventory Value ↓" },
                     { value: "sell", label: "Sort: Sell Price ↓" },
                 ]} />
-                <div style={{ display: "flex", gap: 5 }}>
-                    {[["All", "All"], ["ok", "In Stock"], ["low", `Low (${counts.low})`], ["out", `Out (${counts.out})`]].map(([v, l]) => (
-                        <button key={v} onClick={() => setStatusF(v)} style={{ background: statusF === v ? (v === "out" ? T.crimson : v === "low" ? T.amber : v === "ok" ? T.emerald : T.sky) : "transparent", color: statusF === v ? "#000" : T.t2, border: `1px solid ${statusF === v ? (v === "out" ? T.crimson : v === "low" ? T.amber : v === "ok" ? T.emerald : T.sky) : T.border}`, borderRadius: 7, padding: "7px 12px", fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: FONT.ui, transition: "all 0.12s" }}>{l}</button>
-                    ))}
-                </div>
                 {(counts.low + counts.out) > 0 && (
                     <Btn variant="sky" size="sm" onClick={handleGeneratePO}>
                         📦 Generate Draft PO ({counts.low + counts.out})
@@ -175,32 +200,74 @@ export function InventoryPage({ products, movements, activeShopId, onAdd, onEdit
                 <Btn onClick={onAdd} size="sm">＋ Add Product</Btn>
             </div>
 
+            {/* Category chips */}
+            <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
+                <span style={{ fontSize: 11, color: T.t3, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.07em", fontFamily: FONT.ui, marginRight: 2 }}>Category:</span>
+                {["All", ...CATEGORIES].map(c => (
+                    <button key={c} onClick={() => setCat(c)} style={{
+                        padding: "4px 12px", borderRadius: 20, border: `1px solid ${c === cat ? T.amber : T.border}`,
+                        background: c === cat ? T.amberSoft : "transparent",
+                        color: c === cat ? T.amber : T.t2,
+                        fontSize: 12, cursor: "pointer", transition: "all 0.15s ease", fontFamily: FONT.ui
+                    }}>{c === "All" ? "All Categories" : c}</button>
+                ))}
+            </div>
+
+            {/* Stock Status chips */}
+            <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
+                <span style={{ fontSize: 11, color: T.t3, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.07em", fontFamily: FONT.ui, marginRight: 2 }}>Stock:</span>
+                {[["All", "All"], ["ok", "In Stock"], ["low", `Low (${counts.low})`], ["out", `Out (${counts.out})`]].map(([v, l]) => (
+                    <button key={v} onClick={() => setStatusF(v)} style={{
+                        padding: "4px 12px", borderRadius: 20,
+                        border: `1px solid ${statusF === v ? (v === "out" ? T.crimson : v === "low" ? T.amber : v === "ok" ? T.emerald : T.sky) : T.border}`,
+                        background: statusF === v ? (v === "out" ? "rgba(239,68,68,0.08)" : v === "low" ? T.amberSoft : v === "ok" ? "rgba(16,185,129,0.08)" : "rgba(56,189,248,0.08)") : "transparent",
+                        color: statusF === v ? (v === "out" ? T.crimson : v === "low" ? T.amber : v === "ok" ? T.emerald : T.sky) : T.t2,
+                        fontSize: 12, fontWeight: statusF === v ? 700 : 500, cursor: "pointer", transition: "all 0.15s ease", fontFamily: FONT.ui
+                    }}>{l}</button>
+                ))}
+            </div>
+
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                 <div style={{ fontSize: 12, color: T.t3, fontFamily: FONT.ui }}>
-                    Showing <span style={{ color: T.t1, fontWeight: 700 }}>{filtered.length}</span> of {shopProducts.length} products
+                    Showing <span style={{ color: T.t1, fontWeight: 700 }}>{Math.min(visibleCount, filtered.length)}</span> of {filtered.length} filtered ({shopProducts.length} total)
                 </div>
             </div>
 
+            {/* Empty state — outside table so layout isn't constrained */}
+            {filtered.length === 0 && (
+                <div style={{ textAlign: "center", padding: "60px 20px", color: T.t3 }}>
+                    <div style={{ fontSize: 64, opacity: 0.3, marginBottom: 16 }}>📦</div>
+                    <div style={{ fontSize: 18, fontWeight: 600, color: T.t2, marginBottom: 8 }}>No products found</div>
+                    <div style={{ fontSize: 14, color: T.t3, marginBottom: 20 }}>Try adjusting your search or filters</div>
+                    <Btn variant="ghost" onClick={() => { setSearch(""); setCat("All"); setStatusF("All"); }}>Clear Filters</Btn>
+                </div>
+            )}
+
             {/* Table */}
+            {filtered.length > 0 && (
             <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: 14, overflow: "hidden" }}>
+              <div className="table-scroll">
                 <table style={{ width: "100%", borderCollapse: "collapse" }}>
                     <thead>
                         <tr style={{ background: T.surface, borderBottom: `1px solid ${T.border}` }}>
-                            {["", "Product", "Cat.", "OEM", "Buy", "Sell", "Profit", "Margin", "Stock", "Location", "Status", ""].map((h, i) => (
-                                <th key={i} style={{ padding: "10px 12px", textAlign: "left", color: T.t3, fontWeight: 600, fontSize: 10, textTransform: "uppercase", letterSpacing: "0.08em", fontFamily: FONT.ui, whiteSpace: "nowrap" }}>{h}</th>
+                            {["", "Product", "Cat.", "OEM", "Buy", "Sell", "Profit", "Margin", "Stock", "7D Sales", "Location", "Status", ""].map((h, i) => (
+                                <th key={i} style={{ padding: "10px 12px", textAlign: "left", color: T.t3, fontWeight: 600, fontSize: 11, textTransform: "uppercase", letterSpacing: "1.2px", fontFamily: FONT.ui, whiteSpace: "nowrap" }}>{h}</th>
                             ))}
                         </tr>
                     </thead>
                     <tbody>
-                        {filtered.length === 0 ? (
-                            <tr><td colSpan={12} style={{ padding: "48px", textAlign: "center", color: T.t3, fontFamily: FONT.ui, fontSize: 14 }}>No products match your filters.</td></tr>
-                        ) : filtered.map(p => {
+                        {filtered.slice(0, visibleCount).map(p => {
                             const profit_u = p.sellPrice - p.buyPrice;
                             const mg = margin(p.buyPrice, p.sellPrice);
                             const st = stockStatus(p);
                             return (
                                 <>
-                                    <tr key={p.id} className="row-hover" onClick={() => setExpandedId(expandedId === p.id ? null : p.id)} style={{ borderBottom: expandedId === p.id ? "none" : `1px solid ${T.border}`, background: expandedId === p.id ? T.surface : T.card, cursor: "pointer", transition: "background 0.15s" }}>
+                                    <tr key={p.id} className="row-hover" onClick={() => setExpandedId(expandedId === p.id ? null : p.id)} style={{
+                                        borderBottom: expandedId === p.id ? "none" : `1px solid ${T.border}`,
+                                        background: expandedId === p.id ? T.surface : T.card,
+                                        cursor: "pointer", transition: "background 0.15s",
+                                        borderLeft: `3px solid ${st === "out" ? T.crimson : st === "low" ? T.amber : T.emerald}`,
+                                    }}>
                                         <td style={{ padding: "10px 10px 10px 14px", width: 44 }}>
                                             {p.image && p.image.startsWith("http") ? (
                                                 <img src={p.image} alt="" style={{ width: 34, height: 34, borderRadius: 7, objectFit: "cover", display: "block" }}
@@ -238,12 +305,18 @@ export function InventoryPage({ products, movements, activeShopId, onAdd, onEdit
                                             <span style={{ fontFamily: FONT.mono, fontWeight: 800, fontSize: 16, color: p.stock === 0 ? T.crimson : p.stock < p.minStock ? T.amber : T.t1 }}>{p.stock}</span>
                                             <span style={{ fontSize: 10, color: T.t4, fontFamily: FONT.mono }}> /{p.minStock}</span>
                                         </td>
+                                        <td style={{ padding: "10px 12px", fontFamily: FONT.mono, fontSize: 12, fontWeight: 600, color: (salesLast7d[p.id] || 0) > 0 ? T.t1 : T.t4 }}>
+                                            {salesLast7d[p.id] || 0}
+                                        </td>
                                         <td style={{ padding: "10px 12px", fontFamily: FONT.mono, fontSize: 11, color: T.t3 }}>{p.location}</td>
                                         <td style={{ padding: "10px 12px" }}><Badge status={st} /></td>
                                         <td style={{ padding: "10px 14px 10px 10px" }}>
                                             <div style={{ display: "flex", gap: 5 }} onClick={e => e.stopPropagation()}>
                                                 <Btn size="xs" variant="subtle" onClick={() => onEdit(p)}>Edit</Btn>
                                                 <Btn size="xs" variant="ghost" onClick={() => setAdjP(p)} style={{ borderColor: T.border }}>⚖️</Btn>
+                                                {(st === "low" || st === "out") && (
+                                                    <Btn size="xs" variant="amber" onClick={(e) => { e.stopPropagation(); setPurchP(p); }}>Reorder</Btn>
+                                                )}
                                             </div>
                                         </td>
                                     </tr>
@@ -262,7 +335,7 @@ export function InventoryPage({ products, movements, activeShopId, onAdd, onEdit
                                                         </div>
                                                         <button onClick={(e) => { e.stopPropagation(); setExpandedId(null); }} style={{ background: "transparent", border: `1px solid ${T.border}`, borderRadius: 6, padding: "3px 10px", color: T.t3, fontSize: 11, cursor: "pointer", fontFamily: FONT.ui }}>✕ Close</button>
                                                     </div>
-                                                    <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 12 }}>
+                                                    <div className="detail-grid-4" style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 12 }}>
                                                         {/* OEM Number */}
                                                         <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: 10, padding: "12px 14px" }}>
                                                             <div style={{ fontSize: 9, color: T.t4, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 6 }}>OEM Number</div>
@@ -331,7 +404,18 @@ export function InventoryPage({ products, movements, activeShopId, onAdd, onEdit
                         })}
                     </tbody>
                 </table>
+              </div>
             </div>
+            )}
+
+            {/* Load More button */}
+            {visibleCount < filtered.length && (
+                <div style={{ textAlign: "center", padding: "16px 0" }}>
+                    <Btn variant="ghost" onClick={() => setVisibleCount(v => v + 50)}>
+                        Load 50 more ({filtered.length - visibleCount} remaining)
+                    </Btn>
+                </div>
+            )}
 
             <SaleModal open={!!saleP} product={saleP} products={products} onClose={() => setSaleP(null)} onSave={(data) => onSale(data)} toast={toast} />
             <PurchaseModal open={!!purchP} product={purchP} products={products} onClose={() => setPurchP(null)} onSave={(data) => onPurchase(data)} toast={toast} />

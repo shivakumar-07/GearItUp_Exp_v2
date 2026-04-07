@@ -47,7 +47,10 @@ export function SaleModal({ open, onClose, product, products, onSave, toast }) {
     const profitPerUnit = sellPrice - (sel?.buyPrice || 0);
     const totalProfit = (profitPerUnit * qty) - discAmt;
     const invoiceRef = useRef("");
-    if (!invoiceRef.current || !open) invoiceRef.current = (f.type === "Quotation" ? "EST-" : "INV-") + Math.floor(Math.random() * 9000 + 4000);
+    if (!invoiceRef.current || !open) {
+        const prefix = f.type === "Quotation" ? "EST" : "INV";
+        invoiceRef.current = `${prefix}-${Date.now().toString(36).toUpperCase()}`;
+    }
     const invoiceNo = invoiceRef.current;
 
     // Price override detection

@@ -20,6 +20,8 @@ export function POSBillingPage({ products, activeShopId, onMultiSale, toast }) {
 
     const [billType, setBillType] = useState("Sale"); // Sale | Quotation
     const [items, setItems] = useState([]); // { productId, name, sku, image, qty, price, discount, discountType, gstRate, buyPrice, maxStock }
+    const [suspendedBill, setSuspendedBill] = useState(() => JSON.parse(localStorage.getItem('vl_suspended_bill') || 'null'));
+    const [payment, setPayment] = useState({ cash: 0, upi: 0, credit: 0 });
     const [search, setSearch] = useState("");
     const [customerName, setCustomerName] = useState("");
     const [customerPhone, setCustomerPhone] = useState("");
@@ -35,6 +37,18 @@ export function POSBillingPage({ products, activeShopId, onMultiSale, toast }) {
 
     // Auto-focus search on mount
     useEffect(() => { if (searchRef.current) searchRef.current.focus(); }, []);
+
+    // Ctrl+Enter shortcut to submit bill
+    useEffect(() => {
+        const handler = (e) => {
+            if ((e.ctrlKey || e.metaKey) && e.key === "Enter" && items.length > 0 && !saving && !showInvoice) {
+                e.preventDefault();
+                handleSubmitRef.current?.();
+            }
+        };
+        document.addEventListener("keydown", handler);
+        return () => document.removeEventListener("keydown", handler);
+    }, [items.length, saving, showInvoice]);
 
     // Search results
     const searchResults = useMemo(() => {
@@ -121,13 +135,16 @@ export function POSBillingPage({ products, activeShopId, onMultiSale, toast }) {
         return true;
     };
 
+    // Ref for Ctrl+Enter handler
+    const handleSubmitRef = useRef(null);
+
     // Submit
     const handleSubmit = async () => {
         if (!validate()) return;
         setSaving(true);
         await new Promise(r => setTimeout(r, 300));
 
-        const inv = generateInvoiceNumber(billType === "Sale" ? "INV" : "EST");
+        const inv = `${billType === "Sale" ? "INV" : "EST"}-${Date.now().toString(36).toUpperCase()}`;
         setInvoiceNo(inv);
 
         const finalPayments = { [isUdhaar ? "Credit" : paymentMode]: grandTotal };
@@ -175,10 +192,41 @@ export function POSBillingPage({ products, activeShopId, onMultiSale, toast }) {
         setShowInvoice(true);
     };
 
+    // Keep ref in sync
+    handleSubmitRef.current = handleSubmit;
+
+    // Suspend bill
+    const handleSuspend = () => {
+        if (items.length === 0) return;
+        const draft = { items, customerName, customerPhone, vehicleReg, mechanic, notes, payment, billType, timestamp: Date.now() };
+        localStorage.setItem('vl_suspended_bill', JSON.stringify(draft));
+        setSuspendedBill(draft);
+        setItems([]); setCustomerName(""); setCustomerPhone(""); setVehicleReg(""); setMechanic(""); setNotes("");
+        setPayment({ cash: 0, upi: 0, credit: 0 });
+        toast?.("Bill suspended. You can resume it later.", "info");
+    };
+
+    // Resume suspended bill
+    const handleResume = () => {
+        if (!suspendedBill) return;
+        if (items.length > 0 && !window.confirm("Replace current items with suspended bill?")) return;
+        setItems(suspendedBill.items || []);
+        setCustomerName(suspendedBill.customerName || "");
+        setCustomerPhone(suspendedBill.customerPhone || "");
+        setVehicleReg(suspendedBill.vehicleReg || "");
+        setMechanic(suspendedBill.mechanic || "");
+        setNotes(suspendedBill.notes || "");
+        setPayment(suspendedBill.payment || { cash: 0, upi: 0, credit: 0 });
+        setBillType(suspendedBill.billType || "Sale");
+        localStorage.removeItem('vl_suspended_bill');
+        setSuspendedBill(null);
+        toast?.("Suspended bill restored.", "success");
+    };
+
     // Reset for new bill
     const newBill = () => {
         setItems([]); setCustomerName(""); setCustomerPhone(""); setVehicleReg(""); setMechanic(""); setNotes("");
-        setPaymentMode("Cash"); setShowInvoice(false); setSearch("");
+        setPaymentMode("Cash"); setPayment({ cash: 0, upi: 0, credit: 0 }); setShowInvoice(false); setSearch("");
         if (searchRef.current) searchRef.current.focus();
     };
 
@@ -194,7 +242,7 @@ export function POSBillingPage({ products, activeShopId, onMultiSale, toast }) {
             </div>
 
             {/* Thermal Receipt Style Invoice */}
-            <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 14, padding: "20px 24px", fontFamily: FONT.ui }}>
+            <div data-print-area style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 14, padding: "20px 24px", fontFamily: FONT.ui }}>
                 <div style={{ textAlign: "center", paddingBottom: 14, borderBottom: `1px dashed ${T.border}`, marginBottom: 14 }}>
                     <div style={{ fontSize: 18, fontWeight: 900, color: T.t1 }}>RAVI AUTO PARTS</div>
                     <div style={{ fontSize: 11, color: T.t3, marginTop: 2 }}>14/A, Jubilee Hills, Hyderabad · GST: 36AAXYZ1234X1Z5</div>
@@ -250,21 +298,37 @@ export function POSBillingPage({ products, activeShopId, onMultiSale, toast }) {
     return (
         <div className="page-in" style={{ display: "flex", flexDirection: "column", gap: 16 }}>
             {/* Header */}
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 10 }}>
                 <div>
                     <div style={{ fontSize: 20, fontWeight: 900, color: T.t1, letterSpacing: "-0.02em" }}>🧾 POS — Quick Billing</div>
                     <div style={{ fontSize: 12, color: T.t3, marginTop: 2 }}>Multi-item invoice with payment splitting</div>
                 </div>
-                <div style={{ display: "flex", gap: 8, background: T.surface, padding: 4, borderRadius: 10 }}>
-                    {["Sale", "Quotation"].map(t => (
-                        <button key={t} onClick={() => setBillType(t)} style={{
-                            padding: "8px 18px", borderRadius: 8, border: "none", fontWeight: 800, fontFamily: FONT.ui, fontSize: 13, cursor: "pointer", transition: "all 0.2s",
-                            background: billType === t ? (t === "Sale" ? T.amber : T.sky) : "transparent",
-                            color: billType === t ? "#000" : T.t3,
-                        }}>{t === "Sale" ? "🧾 Tax Invoice" : "📝 Quotation"}</button>
-                    ))}
+                <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                    {/* Suspend */}
+                    {items.length > 0 && (
+                        <Btn variant="ghost" size="sm" onClick={handleSuspend}>⏸ Suspend</Btn>
+                    )}
+                    {/* Bill type pill toggle */}
+                    <div style={{ display: "flex", background: T.surface, borderRadius: 10, padding: 3, gap: 2, border: `1px solid ${T.border}` }}>
+                        {["Sale", "Quotation"].map(t => (
+                            <button key={t} onClick={() => setBillType(t)} style={{
+                                padding: "7px 20px", borderRadius: 8, border: "none", cursor: "pointer",
+                                background: billType === t ? T.amber : "transparent",
+                                color: billType === t ? "#000" : T.t3,
+                                fontWeight: billType === t ? 700 : 500, fontSize: 13, transition: "all 0.15s", fontFamily: FONT.ui
+                            }}>{t}</button>
+                        ))}
+                    </div>
                 </div>
             </div>
+
+            {/* Suspended bill banner */}
+            {suspendedBill && (
+                <div style={{ display: "flex", alignItems: "center", gap: 8, background: `${T.amber}18`, border: `1px solid ${T.amber}44`, borderRadius: 8, padding: "6px 14px", marginBottom: 4 }}>
+                    <span style={{ fontSize: 13, color: T.amber, fontWeight: 600 }}>⏸ Suspended bill from {new Date(suspendedBill.timestamp).toLocaleTimeString()}</span>
+                    <Btn size="xs" variant="amber" onClick={handleResume}>Resume</Btn>
+                </div>
+            )}
 
             {/* Barcode Scanner Overlay */}
             <BarcodeScanner
@@ -303,6 +367,7 @@ export function POSBillingPage({ products, activeShopId, onMultiSale, toast }) {
                 <div style={{ position: "relative", flex: 1 }}>
                 <input
                     ref={searchRef} value={search} onChange={e => setSearch(e.target.value)}
+                    data-barcode-input
                     placeholder="🔍 Search products by name, SKU, brand... (type to add)"
                     style={{
                         width: "100%", padding: "14px 18px", background: T.surface, border: `2px solid ${search ? T.amber : T.border}`,
@@ -344,6 +409,7 @@ export function POSBillingPage({ products, activeShopId, onMultiSale, toast }) {
                 </div>
             ) : (
                 <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: 14, overflow: "hidden" }}>
+                  <div className="table-scroll">
                     <table style={{ width: "100%", borderCollapse: "collapse" }}>
                         <thead>
                             <tr style={{ background: T.surface, borderBottom: `1px solid ${T.border}` }}>
@@ -369,10 +435,14 @@ export function POSBillingPage({ products, activeShopId, onMultiSale, toast }) {
                                         </td>
                                         <td style={{ padding: "10px 8px", width: 70 }}>
                                             <input type="number" value={item.qty} onChange={e => updateItem(idx, "qty", Math.max(1, +e.target.value))} min="1" max={billType === "Sale" ? item.maxStock : 999}
+                                                data-row={idx} data-col="qty"
+                                                onKeyDown={e => { if (e.key === "Tab" && !e.shiftKey) { e.preventDefault(); document.querySelector(`[data-row="${idx}"][data-col="price"]`)?.focus(); } }}
                                                 style={{ width: 60, background: T.bg, border: `1px solid ${T.border}`, borderRadius: 6, padding: "6px 8px", color: T.t1, fontFamily: FONT.mono, fontSize: 14, fontWeight: 800, textAlign: "center" }} />
                                         </td>
                                         <td style={{ padding: "10px 8px", width: 100 }}>
                                             <input type="number" value={item.price} onChange={e => updateItem(idx, "price", +e.target.value)}
+                                                data-row={idx} data-col="price"
+                                                onKeyDown={e => { if (e.key === "Tab" && !e.shiftKey) { e.preventDefault(); document.querySelector(`[data-row="${idx}"][data-col="disc"]`)?.focus(); } else if (e.key === "Tab" && e.shiftKey) { e.preventDefault(); document.querySelector(`[data-row="${idx}"][data-col="qty"]`)?.focus(); } }}
                                                 style={{ width: 90, background: T.bg, border: `1px solid ${item.price !== item.originalPrice ? T.amber : T.border}`, borderRadius: 6, padding: "6px 8px", color: T.t1, fontFamily: FONT.mono, fontSize: 13, textAlign: "right" }} />
                                             {item.price !== item.originalPrice && item.originalPrice > 0 && (
                                                 <div style={{ fontSize: 9, color: T.amber, fontWeight: 700, marginTop: 2, textAlign: "right" }}>
@@ -381,10 +451,17 @@ export function POSBillingPage({ products, activeShopId, onMultiSale, toast }) {
                                             )}
                                         </td>
                                         <td style={{ padding: "10px 8px", width: 80 }}>
-                                            <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
+                                            <div style={{ display: "flex", gap: 4, alignItems: "center", flexWrap: "wrap" }}>
                                                 <input type="number" value={item.discount} onChange={e => updateItem(idx, "discount", Math.max(0, +e.target.value))} min="0"
+                                                    data-row={idx} data-col="disc"
+                                                    onKeyDown={e => { if (e.key === "Tab" && !e.shiftKey) { e.preventDefault(); document.querySelector(`[data-row="${idx + 1}"][data-col="qty"]`)?.focus(); } else if (e.key === "Tab" && e.shiftKey) { e.preventDefault(); document.querySelector(`[data-row="${idx}"][data-col="price"]`)?.focus(); } }}
                                                     style={{ width: 50, background: T.bg, border: `1px solid ${T.border}`, borderRadius: 6, padding: "5px 6px", color: T.t1, fontFamily: FONT.mono, fontSize: 12, textAlign: "center" }} />
                                                 <span style={{ fontSize: 10, color: T.t3, cursor: "pointer" }} onClick={() => updateItem(idx, "discountType", item.discountType === "%" ? "flat" : "%")}>{item.discountType === "%" ? "%" : "₹"}</span>
+                                                {item.discount > 30 && (
+                                                    <span style={{ background: T.amberGlow, color: T.amber, fontSize: 10, padding: "2px 8px", borderRadius: 99, fontWeight: 700, marginLeft: 6 }}>
+                                                        High
+                                                    </span>
+                                                )}
                                             </div>
                                         </td>
                                         <td style={{ padding: "10px 8px", fontFamily: FONT.mono, fontSize: 11, color: T.t3 }}>{item.gstRate}%</td>
@@ -398,13 +475,14 @@ export function POSBillingPage({ products, activeShopId, onMultiSale, toast }) {
                             })}
                         </tbody>
                     </table>
+                  </div>
                 </div>
             )}
 
             {items.length > 0 && (
                 <>
                     {/* Customer Details (collapsible row) */}
-                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: 12 }}>
+                    <div className="customer-grid" style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: 12 }}>
                         <div>
                             <label style={{ fontSize: 10, color: T.t3, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.06em", display: "block", marginBottom: 4 }}>Customer</label>
                             <input value={customerName} onChange={e => setCustomerName(e.target.value)} placeholder="Name or garage"
@@ -428,7 +506,7 @@ export function POSBillingPage({ products, activeShopId, onMultiSale, toast }) {
                     </div>
 
                     {/* Totals + Payment */}
-                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
+                    <div className="bill-summary-grid" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
                         {/* Bill Summary */}
                         <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: 14, padding: "16px 20px" }}>
                             <div style={{ fontSize: 13, fontWeight: 800, color: T.t1, marginBottom: 12, textTransform: "uppercase", letterSpacing: "0.06em" }}>📊 Bill Summary</div>
@@ -449,32 +527,50 @@ export function POSBillingPage({ products, activeShopId, onMultiSale, toast }) {
                         {/* Payment */}
                         <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: 14, padding: "16px 20px" }}>
                             <div style={{ fontSize: 13, fontWeight: 800, color: T.t1, marginBottom: 12, textTransform: "uppercase", letterSpacing: "0.06em" }}>💳 Payment</div>
-                            <div style={{ display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: 8, marginBottom: 12 }}>
-                                {[
-                                    { key: "Cash", icon: "💵", color: T.emerald },
-                                    { key: "UPI", icon: "📱", color: T.sky },
-                                    { key: "Card", icon: "💳", color: "#818CF8" },
-                                    { key: "Udhaar", icon: "📋", color: T.crimson },
-                                ].map(pm => {
-                                    const active = paymentMode === pm.key;
+                            <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 12, padding: 16, marginTop: 4 }}>
+                                <div style={{ fontSize: 11, fontWeight: 600, letterSpacing: "1.2px", textTransform: "uppercase", color: T.t3, marginBottom: 12 }}>Payment Split</div>
+                                {[["cash", "💵 Cash"], ["upi", "📱 UPI"], ["credit", "💳 Credit"]].map(([key, label]) => {
+                                    const remaining = grandTotal - payment.cash - payment.upi - payment.credit;
                                     return (
-                                        <button key={pm.key} onClick={() => setPaymentMode(pm.key)} type="button" style={{
-                                            padding: "12px 10px", borderRadius: 10, cursor: "pointer", transition: "all 0.15s",
-                                            background: active ? `${pm.color}22` : T.surface,
-                                            border: `2px solid ${active ? pm.color : T.border}`,
-                                            display: "flex", alignItems: "center", gap: 8, justifyContent: "center",
-                                        }}>
-                                            <span style={{ fontSize: 18 }}>{pm.icon}</span>
-                                            <span style={{ fontSize: 12, fontWeight: 800, color: active ? pm.color : T.t3 }}>{pm.key}</span>
-                                            {active && <span style={{ fontSize: 11, fontWeight: 700, fontFamily: FONT.mono, color: pm.color }}>{fmt(grandTotal)}</span>}
-                                        </button>
+                                        <div key={key} style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 8 }}>
+                                            <span style={{ minWidth: 80, fontSize: 13, color: T.t2 }}>{label}</span>
+                                            <input
+                                                type="number"
+                                                value={payment[key] || ""}
+                                                onChange={e => setPayment(prev => ({ ...prev, [key]: +e.target.value || 0 }))}
+                                                placeholder="0"
+                                                style={{ flex: 1, background: T.card, border: `1px solid ${T.border}`, borderRadius: 8, padding: "7px 10px", fontSize: 13, color: T.t1, outline: "none", fontFamily: FONT.mono }}
+                                            />
+                                            <button onClick={() => setPayment(prev => ({ ...prev, [key]: Math.max(0, remaining + prev[key]) }))}
+                                                style={{ background: T.amberGlow, color: T.amber, border: "none", borderRadius: 6, padding: "6px 10px", fontSize: 11, fontWeight: 700, cursor: "pointer", whiteSpace: "nowrap" }}>
+                                                Full
+                                            </button>
+                                        </div>
                                     );
                                 })}
+                                <div style={{ display: "flex", justifyContent: "space-between", marginTop: 8, paddingTop: 8, borderTop: `1px solid ${T.border}` }}>
+                                    <span style={{ fontSize: 12, color: T.t3 }}>Total paid</span>
+                                    <span style={{ fontFamily: FONT.mono, fontWeight: 700, color: payment.cash + payment.upi + payment.credit >= grandTotal ? T.emerald : T.amber }}>
+                                        {fmt(payment.cash + payment.upi + payment.credit)}
+                                    </span>
+                                </div>
                             </div>
-                            {isUdhaar && (
-                                <div style={{ background: `${T.crimson}15`, border: `1px solid ${T.crimson}44`, padding: "10px 14px", borderRadius: 8, display: "flex", alignItems: "center", gap: 10 }}>
-                                    <span style={{ fontSize: 16 }}>⚠️</span>
-                                    <div style={{ fontSize: 12, color: T.crimson, fontWeight: 600 }}>Full amount of {fmt(grandTotal)} will be added to credit ledger</div>
+                            {(() => {
+                                const totalPaid = (payment.cash || 0) + (payment.upi || 0) + (payment.credit || 0);
+                                const balance = grandTotal - totalPaid;
+                                return (
+                                    <div style={{ marginTop: 10, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                                        <span style={{ fontSize: 12, color: T.t3 }}>Balance</span>
+                                        <span style={{ fontFamily: FONT.mono, fontWeight: 800, fontSize: 15, color: Math.abs(balance) < 0.01 ? T.emerald : balance > 0 ? T.crimson : T.amber }}>
+                                            {Math.abs(balance) < 0.01 ? "✓ Settled" : balance > 0 ? `${fmt(balance)} due` : `${fmt(Math.abs(balance))} change`}
+                                        </span>
+                                    </div>
+                                );
+                            })()}
+                            {(payment.credit || 0) > 0 && (
+                                <div style={{ marginTop: 8, background: `${T.crimson}15`, border: `1px solid ${T.crimson}44`, padding: "8px 12px", borderRadius: 8, display: "flex", alignItems: "center", gap: 8 }}>
+                                    <span style={{ fontSize: 14 }}>⚠️</span>
+                                    <div style={{ fontSize: 11, color: T.crimson, fontWeight: 600 }}>{fmt(payment.credit)} will be added to credit ledger</div>
                                 </div>
                             )}
                         </div>
@@ -485,6 +581,7 @@ export function POSBillingPage({ products, activeShopId, onMultiSale, toast }) {
                         <input value={notes} onChange={e => setNotes(e.target.value)} placeholder="Notes: warranty info, special instructions..."
                             style={{ flex: 1, padding: "10px 14px", background: T.surface, border: `1px solid ${T.border}`, borderRadius: 8, color: T.t1, fontFamily: FONT.ui, fontSize: 13 }} />
                         <Btn variant="ghost" onClick={newBill}>Clear Bill</Btn>
+                        <Btn variant="ghost" onClick={() => window.print()} style={{ marginRight: 0 }}>🖨 Print</Btn>
                         <Btn variant={billType === "Sale" ? "amber" : "sky"} loading={saving} onClick={handleSubmit} style={{ padding: "12px 28px" }}>
                             {billType === "Sale" ? "🧾 Record Sale & Generate Bill" : "📝 Save Quotation"}
                         </Btn>

@@ -1,3 +1,4 @@
+import { useRef } from "react";
 import { T, FONT } from "../../theme";
 
 export function ShopCard({ shop }) {
@@ -26,10 +27,32 @@ export function ShopCard({ shop }) {
 }
 
 export function SectionCarousel({ title, children }) {
+    const scrollRef = useRef(null);
+    const scroll = (dir) => {
+        if (scrollRef.current) {
+            scrollRef.current.scrollBy({ left: dir * 300, behavior: "smooth" });
+        }
+    };
     return (
         <div style={{ display: "flex", flexDirection: "column", gap: 16, width: "100%", overflow: "hidden", marginBottom: 40 }}>
-            {title && <div style={{ fontSize: 22, fontWeight: 800, color: T.t1, fontFamily: FONT.ui }}>{title}</div>}
-            <div className="no-scrollbar" style={{ display: "flex", gap: 20, overflowX: "auto", paddingBottom: 16, scrollSnapType: "x mandatory", msOverflowStyle: "none", scrollbarWidth: "none" }}>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                {title && <div style={{ fontSize: 22, fontWeight: 800, color: T.t1, fontFamily: FONT.ui }}>{title}</div>}
+                <div style={{ display: "flex", gap: 6 }}>
+                    {[[-1, "←"], [1, "→"]].map(([dir, label]) => (
+                        <button key={label} onClick={() => scroll(dir)} style={{
+                            width: 32, height: 32, borderRadius: 8,
+                            background: T.surface, border: `1px solid ${T.border}`,
+                            color: T.t2, cursor: "pointer", fontSize: 14,
+                            display: "flex", alignItems: "center", justifyContent: "center",
+                            transition: "all 0.15s", fontFamily: FONT.ui,
+                        }}
+                            onMouseEnter={e => { e.currentTarget.style.borderColor = T.amber; e.currentTarget.style.color = T.amber; }}
+                            onMouseLeave={e => { e.currentTarget.style.borderColor = T.border; e.currentTarget.style.color = T.t2; }}
+                        >{label}</button>
+                    ))}
+                </div>
+            </div>
+            <div ref={scrollRef} className="no-scrollbar" style={{ display: "flex", gap: 20, overflowX: "auto", paddingBottom: 16, scrollSnapType: "x mandatory", msOverflowStyle: "none", scrollbarWidth: "none" }}>
                 {children}
             </div>
         </div>

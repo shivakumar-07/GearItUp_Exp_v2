@@ -151,7 +151,9 @@ router.post('/register-shop', authenticate, async (req, res, next) => {
       data: {
         name,
         ownerName: ownerName || req.user.name,
-        phone: req.user.phone || 'tbd',
+        // Use the user's phone if available; otherwise generate a unique placeholder so the
+        // unique constraint on Shop.phone never collides for email-only accounts.
+        phone: req.user.phone || `nophone-${req.user.userId.slice(0, 16)}`,
         gstin,
         address,
         city,
@@ -263,14 +265,29 @@ router.patch('/me/shop', authenticate, async (req, res, next) => {
     const { name, ownerName, gstin, address, city, pincode, shopDescription, logoUrl } = req.body;
     const data = {};
 
-    if (name !== undefined) data.name = name;
-    if (ownerName !== undefined) data.ownerName = ownerName;
-    if (gstin !== undefined) data.gstin = gstin;
+    if (name !== undefined) {
+      if (!name || !name.trim()) {
+        return res.status(400).json({
+          success: false,
+          error: { code: 'INVALID_SHOP_NAME', message: 'Shop name cannot be empty' },
+        });
+      }
+      data.name = name.trim();
+    }
+    if (ownerName !== undefined) data.ownerName = ownerName?.trim() || null;
+    if (gstin !== undefined) data.gstin = gstin?.trim() || null;
     if (address !== undefined) data.address = address;
-    if (city !== undefined) data.city = city;
-    if (pincode !== undefined) data.pincode = pincode;
+    if (city !== undefined) data.city = city?.trim() || null;
+    if (pincode !== undefined) data.pincode = pincode?.trim() || null;
     if (shopDescription !== undefined) data.shopDescription = shopDescription;
     if (logoUrl !== undefined) data.logoUrl = logoUrl;
+
+    if (Object.keys(data).length === 0) {
+      return res.status(400).json({
+        success: false,
+        error: { code: 'NO_CHANGES', message: 'No fields to update' },
+      });
+    }
 
     const shop = await prisma.shop.update({
       where: { shopId: req.user.shopId },

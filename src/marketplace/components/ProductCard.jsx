@@ -2,7 +2,7 @@ import { useState } from "react";
 import { T, FONT } from "../../theme";
 import { fmt, getStarRating, renderStars } from "../../utils";
 
-export function ProductCard({ item, onClick }) {
+export function ProductCard({ item, onClick, inCompare, onCompareToggle }) {
     const { product, bestPrice, availability, shopCount, fastestEta, listings, isCompatible, fitmentType, bestShop } = item;
     const [wishlisted, setWishlisted] = useState(false);
 
@@ -58,6 +58,24 @@ export function ProductCard({ item, onClick }) {
             >
                 {wishlisted ? "❤️" : "🤍"}
             </button>
+
+            {/* COMPARE CHECKBOX */}
+            {onCompareToggle && (
+                <button
+                    onClick={(e) => { e.stopPropagation(); onCompareToggle(item); }}
+                    style={{
+                        position: "absolute", bottom: 50, right: 10, zIndex: 10,
+                        background: inCompare ? T.amber : "rgba(0,0,0,0.5)",
+                        border: `1px solid ${inCompare ? T.amber : T.border}`,
+                        borderRadius: 6, padding: "3px 8px",
+                        color: inCompare ? "#000" : T.t3, fontSize: 10, fontWeight: 700,
+                        cursor: "pointer", fontFamily: FONT.ui, transition: "all 0.15s",
+                        backdropFilter: "blur(4px)",
+                    }}
+                >
+                    {inCompare ? "✓ Comparing" : "+ Compare"}
+                </button>
+            )}
 
             {/* FITMENT BADGE */}
             {isCompatible && (
