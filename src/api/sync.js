@@ -113,12 +113,8 @@ export async function fetchParties() {
 
 // Fetch recent movements (last 200) — endpoint not yet available, reserved for future use
 export async function fetchMovements() {
-  try {
-    // We don't have a global movements endpoint yet, so skip for now
-    return null;
-  } catch (err) {
-    return null;
-  }
+  // We don't have a global movements endpoint yet, so skip for now.
+  return null;
 }
 
 // Sync a product save to the API (fire-and-forget)
@@ -164,6 +160,29 @@ export async function syncInvoice({ items, partyId, partyName, partyPhone, payme
   const hasRealIds = items?.every(item => isDbUuid(item.inventoryId));
   if (!hasRealIds) return;
   try {
+    const inferredTotal = (items || []).reduce((sum, item) => {
+      const qty = Number(item.qty || 0);
+      const unit = Number(item.unitPrice || 0);
+      const discount = Number(item.discount || 0);
+      return sum + Math.max(0, (unit * qty) - discount);
+    }, 0);
+
+    let normalizedCash = normalizeTenderAmount(cashAmount);
+    let normalizedUpi = normalizeTenderAmount(upiAmount);
+    let normalizedCredit = normalizeTenderAmount(creditAmount);
+    const normalizedMode = normalizePaymentMode(paymentMode, {
+      cashAmount: normalizedCash,
+      upiAmount: normalizedUpi,
+      creditAmount: normalizedCredit,
+    });
+
+    if (normalizedMode === 'CASH' && normalizedCash === undefined && inferredTotal > 0) normalizedCash = inferredTotal;
+    if (normalizedMode === 'UPI' && normalizedUpi === undefined && inferredTotal > 0) normalizedUpi = inferredTotal;
+    if (normalizedMode === 'CREDIT' && normalizedCredit === undefined && inferredTotal > 0) normalizedCredit = inferredTotal;
+    if (normalizedMode === 'SPLIT' && normalizedCash === undefined && normalizedUpi === undefined && normalizedCredit === undefined && inferredTotal > 0) {
+      normalizedCash = inferredTotal;
+    }
+
     await api.post('/api/billing/invoice', {
       items: items.map(item => ({
         inventoryId: item.inventoryId,
@@ -174,10 +193,10 @@ export async function syncInvoice({ items, partyId, partyName, partyPhone, payme
       partyId: partyId || undefined,
       partyName: partyName || undefined,
       partyPhone: partyPhone || undefined,
-      paymentMode: paymentMode || 'CASH',
-      cashAmount: cashAmount || undefined,
-      upiAmount: upiAmount || undefined,
-      creditAmount: creditAmount || undefined,
+      paymentMode: normalizedMode,
+      cashAmount: normalizedCash,
+      upiAmount: normalizedUpi,
+      creditAmount: normalizedCredit,
       notes: notes || undefined,
     });
     console.log('[Sync] Invoice synced to backend');
@@ -223,4 +242,25 @@ export async function syncAdjustment({ inventoryId, type, qty, reason, refundMet
  */
 function isDbUuid(id) {
   return typeof id === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id);
+}
+
+function normalizeTenderAmount(value) {
+  const num = Number(value);
+  return Number.isFinite(num) && num > 0 ? num : undefined;
+}
+
+function normalizePaymentMode(mode, amounts = {}) {
+  const modeMap = {
+    CASH: 'CASH',
+    UPI: 'UPI',
+    CARD: 'CARD',
+    CREDIT: 'CREDIT',
+    UDHAAR: 'CREDIT',
+    SPLIT: 'SPLIT',
+  };
+
+  const key = String(mode || '').trim().toUpperCase();
+  const mapped = modeMap[key] || (key || 'CASH');
+  const activeTenders = [amounts.cashAmount, amounts.upiAmount, amounts.creditAmount].filter(Boolean).length;
+  return activeTenders > 1 ? 'SPLIT' : mapped;
 }
