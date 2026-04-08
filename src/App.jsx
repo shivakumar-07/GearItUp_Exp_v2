@@ -26,6 +26,7 @@ const InventoryPage  = lazy(() => import("./pages/InventoryPage").then(m => ({ d
 const POSBillingPage = lazy(() => import("./pages/POSBillingPage").then(m => ({ default: m.POSBillingPage })));
 const HistoryPage    = lazy(() => import("./pages/HistoryPage").then(m => ({ default: m.HistoryPage })));
 const ReportsPage    = lazy(() => import("./pages/ReportsPage").then(m => ({ default: m.ReportsPage })));
+const LandingPage   = lazy(() => import("./pages/LandingPage").then(m => ({ default: m.LandingPage })));
 
 // Shared page-transition fallback — skeletal shimmer instead of a spinner
 const PageLoader = () => (
@@ -742,6 +743,9 @@ function AppContent() {
         <Route path="/profile" element={<Navigate to={currentUser ? "/dashboard" : "/login"} replace />} />
         <Route path="/settings" element={<Navigate to={currentUser ? "/dashboard" : "/login"} replace />} />
         <Route path="/admin" element={<Navigate to={currentUser ? "/dashboard" : "/login"} replace />} />
+
+        {/* Landing page — always public, logged-in users get an "Open App" nav */}
+        <Route path="/" element={<LandingPage currentUser={currentUser} />} />
 
         {/* Catch-all */}
         <Route path="*" element={<Navigate to={currentUser ? "/dashboard" : "/login"} replace />} />
