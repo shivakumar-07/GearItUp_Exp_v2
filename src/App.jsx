@@ -41,6 +41,7 @@ const ProductDetailsPage = lazy(() => import("./marketplace/pages/ProductDetails
 const CheckoutPage       = lazy(() => import("./marketplace/pages/CheckoutPage").then(m => ({ default: m.CheckoutPage })));
 const OrderTrackingPage  = lazy(() => import("./marketplace/pages/OrderTrackingPage").then(m => ({ default: m.OrderTrackingPage })));
 const AdminPage          = lazy(() => import("./marketplace/pages/AdminPage").then(m => ({ default: m.AdminPage })));
+const LandingPage        = lazy(() => import("./pages/LandingPage").then(m => ({ default: m.LandingPage })));
 
 // Shared page-transition fallback — skeletal shimmer instead of a spinner
 const PageLoader = () => (
@@ -866,6 +867,9 @@ function AppContent() {
 
         {/* Admin */}
         <Route path="/admin" element={currentUser?.role === "PLATFORM_ADMIN" ? <AdminShell><AdminPage /></AdminShell> : <Navigate to={currentUser ? getDefaultRoute(currentUser.role) : "/login"} replace />} />
+
+        {/* Landing page — always public, logged-in users get an "Open App" nav */}
+        <Route path="/" element={<LandingPage currentUser={currentUser} />} />
 
         {/* Catch-all */}
         <Route path="*" element={<Navigate to={currentUser ? getDefaultRoute(currentUser.role) : "/login"} replace />} />
