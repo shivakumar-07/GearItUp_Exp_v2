@@ -2,7 +2,7 @@ import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { T, FONT } from "../theme";
 
-// ─── Brand palette ── exact dark automotive red from the redpiston logo ─────
+// ─── Brand palette ── exact dark automotive red from the RedPiston logo ─────
 const R = {
   // Primary: the deep brick-crimson from the logo (measured from image)
   red:       "#8B1A1A",
@@ -213,7 +213,7 @@ function Logo({ height = 38, showText = true }) {
       }}>
         <img
           src="/logo.svg"
-          alt="redpiston"
+          alt="RedPISTON"
           style={{
             width: w,
             height: height,
@@ -225,8 +225,8 @@ function Logo({ height = 38, showText = true }) {
       {showText && (
         <div>
           <div style={{ lineHeight:1 }}>
-            <span style={{ fontSize:19, fontWeight:800, color:T.t1, letterSpacing:"0.04em" }}>red</span>
-            <span style={{ fontSize:19, fontWeight:900, color:R.red, letterSpacing:"0.07em" }}>piston</span>
+            <span style={{ fontSize:19, fontWeight:800, color:T.t1, letterSpacing:"0.04em" }}>Red</span>
+            <span style={{ fontSize:19, fontWeight:900, color:R.red, letterSpacing:"0.07em" }}>PISTON</span>
           </div>
           <div style={{ fontSize:9, color:R.steelDim, fontWeight:700, letterSpacing:"0.18em", textTransform:"uppercase", marginTop:3 }}>
             FIND PARTS. FAST.
@@ -372,7 +372,7 @@ function ERPMockup() {
         <div style={{width:10,height:10,borderRadius:"50%",background:R.red}}/>
         <div style={{width:10,height:10,borderRadius:"50%",background:"#10B981"}}/>
         <div style={{flex:1}}/>
-        <span style={{fontSize:10,color:T.t3,fontWeight:700,letterSpacing:"0.08em"}}>redpiston · ERP DASHBOARD</span>
+        <span style={{fontSize:10,color:T.t3,fontWeight:700,letterSpacing:"0.08em"}}>RED PISTON · ERP DASHBOARD</span>
         <div style={{flex:1}}/>
       </div>
       {/* KPIs */}
@@ -438,7 +438,7 @@ function MarketplaceMockup() {
         <div style={{width:10,height:10,borderRadius:"50%",background:"#EF4444"}}/>
         <div style={{width:10,height:10,borderRadius:"50%",background:R.red}}/>
         <div style={{width:10,height:10,borderRadius:"50%",background:"#10B981"}}/>
-        <div style={{flex:1,textAlign:"center",fontSize:10,color:T.t3,fontWeight:700,letterSpacing:"0.07em"}}>redpiston MARKETPLACE</div>
+        <div style={{flex:1,textAlign:"center",fontSize:10,color:T.t3,fontWeight:700,letterSpacing:"0.07em"}}>RED PISTON MARKETPLACE</div>
       </div>
       <div style={{padding:14}}>
         <div style={{background:"rgba(16,185,129,0.1)",border:"1px solid rgba(16,185,129,0.3)",borderRadius:10,padding:"8px 13px",marginBottom:12,display:"flex",alignItems:"center",gap:9}}>
@@ -490,8 +490,8 @@ const MP_FEATS = [
 ];
 
 const REVIEWS = [
-  {q:"Before redpiston, I wrote every bill by hand. Now I run 80+ invoices a day and my udhaar recovery improved 40%. The GST report alone saves ₹3k/month on my CA.",n:"Rajesh Kumar",r:"Owner · Karol Bagh Auto Parts, Delhi",i:"RK",c:R.red},
-  {q:"Three shops in Pune used to be total chaos. redpiston's multi-store view saves me 2 hours daily. I can see all three branches' stock and sales from my phone.",n:"Suresh Mehta",r:"Owner · SM Auto Parts Chain, Pune",i:"SM",c:"#10B981"},
+  {q:"Before Red Piston, I wrote every bill by hand. Now I run 80+ invoices a day and my udhaar recovery improved 40%. The GST report alone saves ₹3k/month on my CA.",n:"Rajesh Kumar",r:"Owner · Karol Bagh Auto Parts, Delhi",i:"RK",c:R.red},
+  {q:"Three shops in Pune used to be total chaos. Red Piston's multi-store view saves me 2 hours daily. I can see all three branches' stock and sales from my phone.",n:"Suresh Mehta",r:"Owner · SM Auto Parts Chain, Pune",i:"SM",c:"#10B981"},
   {q:"Ordering parts used to take 3 phone calls. Now I search by the exact car model, get guaranteed-fit parts, and they arrive in under 2 hours. Game changer.",n:"Arjun Pillai",r:"Independent Mechanic · Bengaluru",i:"AP",c:"#38BDF8"},
 ];
 
@@ -587,7 +587,7 @@ export function LandingPage({ currentUser }) {
             <div>
               <div className="s-badge lp-fu" style={{marginBottom:20}}>
                 <span style={{width:6,height:6,borderRadius:"50%",background:R.red,display:"inline-block",animation:"pulse 1.4s infinite"}}/>
-                <span>red<strong>piston</strong> — India's Auto Parts Platform</span>
+                <span>Red<strong>PISTON</strong> — India's Auto Parts Platform</span>
               </div>
 
               <h1 className="hero-title lp-fu-1" style={{
@@ -648,7 +648,7 @@ export function LandingPage({ currentUser }) {
                       }}>{["R","S","A"][i]}</div>
                     ))}
                   </div>
-                  <span style={{fontSize:13,color:T.t2,fontWeight:500}}>500+ shops trust redpiston</span>
+                  <span style={{fontSize:13,color:T.t2,fontWeight:500}}>500+ shops trust Red Piston</span>
                 </div>
                 <div style={{display:"flex",alignItems:"center",gap:3}}>
                   {[...Array(5)].map((_,i)=><span key={i} style={{color:R.red,fontSize:15}}>★</span>)}
@@ -871,7 +871,7 @@ export function LandingPage({ currentUser }) {
               </div>
 
               <p style={{fontSize:16,color:T.t2,marginBottom:36,lineHeight:1.65,maxWidth:480,margin:"0 auto 36px"}}>
-                Join 500+ shop owners who replaced notebooks and WhatsApp chaos with red<strong>piston</strong>. Start free — no credit card required.
+                Join 500+ shop owners who replaced notebooks and WhatsApp chaos with Red<strong>PISTON</strong>. Start free — no credit card required.
               </p>
 
               <div style={{display:"flex",gap:14,justifyContent:"center",flexWrap:"wrap"}}>
@@ -935,7 +935,7 @@ export function LandingPage({ currentUser }) {
           <div className="divider" style={{marginBottom:22}}/>
 
           <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",flexWrap:"wrap",gap:12}}>
-            <div style={{fontSize:12,color:T.t4}}>© 2026 redpiston Technologies Pvt. Ltd. All rights reserved.</div>
+            <div style={{fontSize:12,color:T.t4}}>© 2026 RedPISTON Technologies Pvt. Ltd. All rights reserved.</div>
             <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
               {["Made in India 🇮🇳","GST Compliant","PCI DSS Ready"].map(b=>(
                 <span key={b} style={{fontSize:11,color:T.t4,background:R.card,border:`1px solid ${R.border}`,borderRadius:6,padding:"4px 10px",fontWeight:600}}>{b}</span>
