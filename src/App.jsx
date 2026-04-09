@@ -24,6 +24,7 @@ const ResetPasswordPage = lazy(() => import("./pages/ResetPasswordPage"));
 const DashboardPage  = lazy(() => import("./pages/DashboardPage").then(m => ({ default: m.DashboardPage })));
 const InventoryPage  = lazy(() => import("./pages/InventoryPage").then(m => ({ default: m.InventoryPage })));
 const POSBillingPage = lazy(() => import("./pages/POSBillingPage").then(m => ({ default: m.POSBillingPage })));
+const HistoryPage    = lazy(() => import("./pages/HistoryPage").then(m => ({ default: m.HistoryPage })));
 const ReportsPage    = lazy(() => import("./pages/ReportsPage").then(m => ({ default: m.ReportsPage })));
 
 // Shared page-transition fallback — skeletal shimmer instead of a spinner
@@ -77,6 +78,7 @@ const NAV_ITEMS = [
   { key: "dashboard", path: "/dashboard", icon: "◈", label: "Dashboard" },
   { key: "inventory", path: "/inventory", icon: "⬡", label: "Inventory" },
   { key: "pos", path: "/billing", icon: "🧾", label: "POS" },
+  { key: "history", path: "/history", icon: "🕘", label: "History" },
   { key: "reports", path: "/reports", icon: "📊", label: "Reports" },
 ];
 
@@ -712,12 +714,12 @@ function AppContent() {
         <Route path="/dashboard" element={currentUser ? <ERPShell><DashboardPage products={products} movements={movements} orders={orders} activeShopId={activeShopId} onNavigate={(p) => navigate("/" + p)} jobCards={jobCards} parties={parties} vehicles={vehicles} /></ERPShell> : <Navigate to="/login" replace />} />
         <Route path="/inventory" element={currentUser ? <ERPShell><InventoryPage products={products} movements={movements} activeShopId={activeShopId} onAdd={() => setCatalogModal(true)} onEdit={(p) => setPModal({ open: true, product: p })} onSale={handleSale} onPurchase={handlePurchase} onAdjust={handleAdjustment} toast={toast} /></ERPShell> : <Navigate to="/login" replace />} />
         <Route path="/billing" element={currentUser ? <ERPShell><POSBillingPage products={products} activeShopId={activeShopId} onMultiSale={handleMultiItemSale} toast={toast} /></ERPShell> : <Navigate to="/login" replace />} />
+        <Route path="/history" element={currentUser ? <ERPShell><HistoryPage movements={movements} activeShopId={activeShopId} /></ERPShell> : <Navigate to="/login" replace />} />
         <Route path="/reports" element={currentUser ? <ERPShell><ReportsPage movements={movements} products={products} activeShopId={activeShopId} receipts={receipts} saveReceipts={saveReceipts} onPaymentReceipt={handlePaymentReceipt} toast={toast} /></ERPShell> : <Navigate to="/login" replace />} />
 
         {/* Out-of-scope routes — redirect into MVP */}
         <Route path="/parties" element={<Navigate to={currentUser ? "/dashboard" : "/login"} replace />} />
         <Route path="/workshop" element={<Navigate to={currentUser ? "/dashboard" : "/login"} replace />} />
-        <Route path="/history" element={<Navigate to={currentUser ? "/dashboard" : "/login"} replace />} />
         <Route path="/orders" element={<Navigate to={currentUser ? "/dashboard" : "/login"} replace />} />
         <Route path="/marketplace" element={<Navigate to={currentUser ? "/dashboard" : "/login"} replace />} />
         <Route path="/marketplace/orders" element={<Navigate to={currentUser ? "/dashboard" : "/login"} replace />} />

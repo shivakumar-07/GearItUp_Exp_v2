@@ -7,7 +7,10 @@
     "dev": "vite",
     "build": "vite build",
     "lint": "eslint .",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "smoke:api": "npm --prefix backend run smoke:api",
+    "deploy:vercel:preview": "vercel deploy --yes",
+    "deploy:vercel:prod": "vercel deploy --prod --yes"
   },
   "dependencies": {
     "@zxing/browser": "^0.1.5",
