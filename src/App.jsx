@@ -10,19 +10,15 @@ import { ShortcutOverlay } from "./components/ShortcutOverlay";
 import { CommandPalette } from "./components/CommandPalette";
 
 // Always-loaded: auth, shell chrome, modals (needed on first render)
-import { RequireAuth, getDefaultRoute } from "./components/RequireAuth";
 import { ProfileDropdown } from "./components/ProfileDropdown";
 import { Avatar } from "./components/Avatar";
 import { ProductModal } from "./components/ProductModal";
 import { BulkStockInModal } from "./components/BulkStockInModal";
-import { CartDrawer } from "./marketplace/components/CartDrawer";
 
 // ── Lazy-loaded pages (each becomes its own JS chunk, loaded on first visit) ──
 // Named-export pages need the .then() unwrap since React.lazy requires a default export.
 const LoginPage         = lazy(() => import("./pages/LoginPage"));
 const ResetPasswordPage = lazy(() => import("./pages/ResetPasswordPage"));
-const ProfilePage       = lazy(() => import("./pages/ProfilePage").then(m => ({ default: m.ProfilePage })));
-const SettingsPage      = lazy(() => import("./pages/SettingsPage").then(m => ({ default: m.SettingsPage })));
 
 // ERP pages — only a SHOP_OWNER ever loads these
 const DashboardPage  = lazy(() => import("./pages/DashboardPage").then(m => ({ default: m.DashboardPage })));
@@ -30,18 +26,7 @@ const InventoryPage  = lazy(() => import("./pages/InventoryPage").then(m => ({ d
 const POSBillingPage = lazy(() => import("./pages/POSBillingPage").then(m => ({ default: m.POSBillingPage })));
 const HistoryPage    = lazy(() => import("./pages/HistoryPage").then(m => ({ default: m.HistoryPage })));
 const ReportsPage    = lazy(() => import("./pages/ReportsPage").then(m => ({ default: m.ReportsPage })));
-const OrdersPage     = lazy(() => import("./pages/OrdersPage").then(m => ({ default: m.OrdersPage })));
-const PartiesPage    = lazy(() => import("./pages/PartiesPage").then(m => ({ default: m.PartiesPage })));
-const WorkshopPage   = lazy(() => import("./pages/WorkshopPage").then(m => ({ default: m.WorkshopPage })));
-const PricingPage    = lazy(() => import("./pages/PricingPage").then(m => ({ default: m.PricingPage })));
-
-// Marketplace pages — only a CUSTOMER ever loads these
-const MarketplaceHome    = lazy(() => import("./marketplace/pages/MarketplaceHome").then(m => ({ default: m.MarketplaceHome })));
-const ProductDetailsPage = lazy(() => import("./marketplace/pages/ProductDetailsPage").then(m => ({ default: m.ProductDetailsPage })));
-const CheckoutPage       = lazy(() => import("./marketplace/pages/CheckoutPage").then(m => ({ default: m.CheckoutPage })));
-const OrderTrackingPage  = lazy(() => import("./marketplace/pages/OrderTrackingPage").then(m => ({ default: m.OrderTrackingPage })));
-const AdminPage          = lazy(() => import("./marketplace/pages/AdminPage").then(m => ({ default: m.AdminPage })));
-const LandingPage        = lazy(() => import("./pages/LandingPage").then(m => ({ default: m.LandingPage })));
+const LandingPage   = lazy(() => import("./pages/LandingPage").then(m => ({ default: m.LandingPage })));
 
 // Shared page-transition fallback — skeletal shimmer instead of a spinner
 const PageLoader = () => (
@@ -94,17 +79,8 @@ const NAV_ITEMS = [
   { key: "dashboard", path: "/dashboard", icon: "◈", label: "Dashboard" },
   { key: "inventory", path: "/inventory", icon: "⬡", label: "Inventory" },
   { key: "pos", path: "/billing", icon: "🧾", label: "POS" },
-  { key: "parties", path: "/parties", icon: "👥", label: "Parties" },
-  { key: "workshop", path: "/workshop", icon: "🔧", label: "Workshop" },
-  { key: "history", path: "/history", icon: "⊞", label: "History" },
+  { key: "history", path: "/history", icon: "🕘", label: "History" },
   { key: "reports", path: "/reports", icon: "📊", label: "Reports" },
-  { key: "orders", path: "/orders", icon: "◎", label: "Orders" },
-];
-
-const MP_NAV = [
-  { key: "home", path: "/marketplace", icon: "🏠", label: "Home", color: "#10B981" },
-  { key: "orders", path: "/marketplace/orders", icon: "📦", label: "Orders", color: "#0EA5E9" },
-  { key: "pricing", path: "/marketplace/pricing", icon: "💎", label: "Pricing", color: "#D97706" },
 ];
 
 // ========== SHARED CONTEXT (avoids passing props through closure) ==========
@@ -123,7 +99,7 @@ function ERPShell({ children }) {
     saveProduct, handleBulkStockIn,
   } = useContext(AppCtx);
 
-  const { products, movements, orders, shops, activeShopId, resetAll, saveShops } = useStore();
+  const { products, movements, shops, activeShopId, resetAll, saveShops } = useStore();
   const navigate = useNavigate();
   const location = useLocation();
   const [shopEdit, setShopEdit] = useState(null);
@@ -133,7 +109,6 @@ function ERPShell({ children }) {
   const stockSt = (p) => { if (p.stock <= 0) return "out"; if (p.stock < p.minStock) return "low"; return "ok"; };
   const lowStockProducts = useMemo(() => (products || []).filter((p) => p.shopId === activeShopId && stockSt(p) !== "ok"), [products, activeShopId]);
   const lowCount = lowStockProducts.length;
-  const pendingOrders = useMemo(() => (orders || []).filter((o) => o.shopId === activeShopId && (o.status === "NEW" || o.status === "placed")).length, [orders, activeShopId]);
   const shop = useMemo(() => (shops || []).find((s) => s.id === activeShopId) || { name: "My Shop", city: "Location" }, [shops, activeShopId]);
   const currentPath = location.pathname;
 
@@ -282,19 +257,6 @@ function ERPShell({ children }) {
               }}>
                 {n.label}
               </span>
-              {/* Badge: pending orders */}
-              {n.key === "orders" && pendingOrders > 0 && (
-                <span style={{
-                  position: "absolute", top: 3, right: 7,
-                  background: T.crimson, color: "#fff",
-                  fontSize: 8, borderRadius: "50%",
-                  width: 14, height: 14,
-                  display: "flex", alignItems: "center", justifyContent: "center",
-                  fontWeight: 900,
-                }}>
-                  {pendingOrders}
-                </span>
-              )}
               {/* Badge: low stock */}
               {n.key === "inventory" && lowCount > 0 && (
                 <span style={{
@@ -314,100 +276,6 @@ function ERPShell({ children }) {
         <div className="sidebar-spacer" style={{ flex: 1 }} />
       </div>
     </div>
-  );
-}
-
-// ========== MARKETPLACE SHELL ==========
-function MPShell({ children }) {
-  const { toasts, removeToast } = useContext(AppCtx);
-  const navigate = useNavigate();
-  const location = useLocation();
-  const currentPath = location.pathname;
-
-  return (
-    <>
-      <style>{GLOBAL_CSS}</style>
-      <div className="mp-content" style={{ paddingLeft: 68 }}>{children}</div>
-      <CartDrawer onCheckout={() => navigate("/marketplace/checkout")} />
-      <div className="mp-sidebar" style={{
-        position: "fixed", left: 0, top: 0, bottom: 0, width: 68, zIndex: 400,
-        background: `${T.surface}f0`, backdropFilter: "blur(16px)",
-        borderRight: `1px solid ${T.border}`,
-        display: "flex", flexDirection: "column", alignItems: "center",
-        paddingTop: 14, gap: 3,
-      }}>
-        <div className="sidebar-brand" style={{
-          width: 40, height: 40, borderRadius: 12,
-          background: `linear-gradient(135deg, ${T.amber}, ${T.amberDim})`,
-          display: "flex", alignItems: "center", justifyContent: "center",
-          fontSize: 16, boxShadow: `0 2px 12px ${T.amber}44`, marginBottom: 6,
-        }}>
-          ⚙️
-        </div>
-        <div className="sidebar-brand" style={{ fontSize: 7, color: T.amber, fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 10 }}>
-          Market
-        </div>
-        {MP_NAV.map((a) => {
-          const isActive = currentPath === a.path || currentPath.startsWith(a.path + "/");
-          return (
-            <button
-              key={a.key}
-              onClick={() => navigate(a.path)}
-              title={a.label}
-              style={{
-                width: 58, height: 48, borderRadius: 10,
-                border: "none",
-                cursor: "pointer",
-                background: isActive ? `${a.color}18` : "transparent",
-                display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
-                gap: 2, transition: "background 0.15s",
-                padding: "4px 0", position: "relative", outline: "none",
-              }}
-              onMouseEnter={e => { if (!isActive) e.currentTarget.style.background = `${a.color}0d`; }}
-              onMouseLeave={e => { if (!isActive) e.currentTarget.style.background = "transparent"; }}
-            >
-              {isActive && (
-                <span style={{
-                  position: "absolute", left: -5, top: "50%",
-                  transform: "translateY(-50%)",
-                  width: 3, height: 20, borderRadius: 3,
-                  background: a.color,
-                }} />
-              )}
-              <span style={{ fontSize: 15 }}>{a.icon}</span>
-              <span style={{
-                fontSize: 8, fontWeight: 700,
-                color: isActive ? a.color : T.t3,
-                fontFamily: FONT.ui, letterSpacing: "0.02em",
-                transition: "color 0.15s",
-              }}>
-                {a.label}
-              </span>
-            </button>
-          );
-        })}
-        <div className="sidebar-spacer" style={{ flex: 1 }} />
-      </div>
-      <Toast items={toasts} onRemove={removeToast} />
-    </>
-  );
-}
-
-// ========== ADMIN SHELL ==========
-function AdminShell({ children }) {
-  const { toasts, removeToast } = useContext(AppCtx);
-
-  return (
-    <>
-      <style>{GLOBAL_CSS}</style>
-      <div className="mp-content" style={{ paddingLeft: 68 }}>{children}</div>
-      <div className="admin-sidebar" style={{ position: "fixed", left: 0, top: 0, bottom: 0, width: 68, zIndex: 400, background: `${T.surface}ee`, backdropFilter: "blur(12px)", borderRight: `1px solid ${T.border}`, display: "flex", flexDirection: "column", alignItems: "center", paddingTop: 20, gap: 4 }}>
-        <div className="sidebar-brand" style={{ width: 40, height: 40, borderRadius: 12, background: "linear-gradient(135deg, #4F46E5, #7C3AED)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 18, boxShadow: "0 4px 16px rgba(79,70,229,0.4)", marginBottom: 12 }}>🛡️</div>
-        <div className="sidebar-brand" style={{ fontSize: 7, color: "#A78BFA", fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.08em" }}>Admin</div>
-        <div className="sidebar-spacer" style={{ flex: 1 }} />
-      </div>
-      <Toast items={toasts} onRemove={removeToast} />
-    </>
   );
 }
 
@@ -431,10 +299,10 @@ function AppContent() {
 
   // ── Store (always called — hooks rule) ──
   const {
-    products, movements, orders, shops, parties, vehicles, jobCards,
-    saveProducts, saveMovements, saveOrders, saveShops, saveParties, saveVehicles, saveJobCards,
-    auditLog, receipts, saveReceipts,
-    loaded, activeShopId, setActiveShopId, persistShopId, logAudit, resetAll, clearStore,
+    products, movements, orders, parties, vehicles, jobCards,
+    saveProducts, saveMovements,
+    receipts, saveReceipts,
+    loaded, activeShopId, setActiveShopId, logAudit, clearStore,
   } = useStore();
 
   // ── UI state ──
@@ -457,13 +325,14 @@ function AppContent() {
           case "n": e.preventDefault(); navigate("/billing"); break;
           case "p": e.preventDefault(); navigate("/billing"); break;
           case "i": e.preventDefault(); navigate("/inventory"); break;
-          case "h": e.preventDefault(); navigate("/history"); break;
           case "k": e.preventDefault(); setCmdPaletteOpen(true); break;
           case "b":
             e.preventDefault();
-            // Focus barcode input if it exists on the page
-            const barcodeInput = document.querySelector('[data-barcode-input]');
-            if (barcodeInput) barcodeInput.focus();
+            {
+              // Focus barcode input if it exists on the page
+              const barcodeInput = document.querySelector('[data-barcode-input]');
+              if (barcodeInput) barcodeInput.focus();
+            }
             break;
           default: break;
         }
@@ -481,6 +350,13 @@ function AppContent() {
 
   // ── Auth handlers ──
   const handleLogin = useCallback((user) => {
+    let lastUserId = null;
+    try { lastUserId = localStorage.getItem("as_last_user_id"); } catch {}
+
+    if (lastUserId && user?.userId && lastUserId !== user.userId) {
+      clearStore();
+    }
+
     setCurrentUser(user);
     // Propagate the real shopId from the DB so all API calls and store filters
     // use the correct UUID (not the hardcoded "s1" seed default).
@@ -489,24 +365,30 @@ function AppContent() {
       try { localStorage.setItem("vl_shopId", user.shopId); } catch {}
       try { localStorage.setItem("as_user", JSON.stringify(user)); } catch {}
     }
-    const dest = getDefaultRoute(user?.role);
-    navigate(dest, { replace: true });
-  }, [navigate, setActiveShopId]);
+    if (user?.userId) {
+      try { localStorage.setItem("as_last_user_id", user.userId); } catch {}
+    }
+    navigate("/dashboard", { replace: true });
+  }, [navigate, setActiveShopId, clearStore]);
 
   const handleLogout = useCallback(() => {
     // Revoke the refresh token in the backend (fire-and-forget)
     const rt = localStorage.getItem("as_refresh_token");
     api.post("/api/auth/logout", { refreshToken: rt }).catch(() => {});
     
-    // Clear both auth tokens and application store data
+    // Clear auth/session only. Keep vl_* app data so inventory/POS history
+    // remains available after the same user logs back in.
     clearTokens();
-    clearStore(); // Wipes all vl_* from localStorage and state
+
+    if (currentUser?.userId) {
+      try { localStorage.setItem("as_last_user_id", currentUser.userId); } catch {}
+    }
     
     localStorage.removeItem("as_user");
     localStorage.removeItem("as_refresh_token");
     setCurrentUser(null);
     navigate("/login", { replace: true });
-  }, [navigate, clearStore]);
+  }, [navigate, currentUser]);
 
   // ── Business handlers ──
   const saveProduct = useCallback((p) => {
@@ -613,7 +495,9 @@ function AppContent() {
     }
     const sel = products.find((p) => p.id === data.productId);
     const isCredit = data.paymentMode === "Udhaar" || (data.payments && data.payments.Credit > 0);
-    const paymentStr = data.payments ? Object.entries(data.payments).filter(([_, a]) => a > 0).map(([k, a]) => `${k}:${a}`).join(", ") : data.payment;
+    const paymentStr = data.payments
+      ? Object.entries(data.payments).filter((entry) => entry[1] > 0).map(([mode, amount]) => `${mode}:${amount}`).join(", ")
+      : data.payment;
     saveMovements([...movements, {
       id: "m" + uid(), shopId: activeShopId, productId: data.productId, productName: sel?.name || "",
       type: isQuote ? "ESTIMATE" : "SALE", qty: data.qty, unitPrice: data.sellPrice, sellingPrice: data.sellPrice,
@@ -662,7 +546,9 @@ function AppContent() {
     data.items.forEach((item) => {
       if (!isQuote) updatedProducts = updatedProducts.map((p) => (p.id === item.productId ? { ...p, stock: Math.max(0, p.stock - item.qty) } : p));
       const isCredit = data.paymentMode === "Udhaar" || (data.payments && data.payments.Credit > 0);
-      const paymentStr = data.payments ? Object.entries(data.payments).filter(([_, a]) => a > 0).map(([k, a]) => `${k}:${a}`).join(", ") : "";
+      const paymentStr = data.payments
+        ? Object.entries(data.payments).filter((entry) => entry[1] > 0).map(([mode, amount]) => `${mode}:${amount}`).join(", ")
+        : "";
       newMovements.push({
         id: "m" + uid(), shopId: activeShopId, productId: item.productId, productName: item.name,
         type: isQuote ? "ESTIMATE" : "SALE", qty: item.qty, unitPrice: item.sellPrice, sellingPrice: item.sellPrice,
@@ -803,12 +689,6 @@ function AppContent() {
     saveProduct, handleBulkStockIn,
   }), [pModal, setPModal, catalogModal, setCatalogModal, toast, toasts, removeToast, currentUser, handleLogout, saveProduct, handleBulkStockIn]);
 
-  // Generate collision-proof invoice number
-  const genInvoiceNo = useCallback(() => {
-    const shopSuffix = (activeShopId || "0000").slice(-4).toUpperCase();
-    return shopSuffix + "-" + Date.now().toString(36).toUpperCase();
-  }, [activeShopId]);
-
   // ── Loading state — skeletal screen, no spinner ──
   if (!loaded) {
     return (
@@ -842,37 +722,33 @@ function AppContent() {
       <Suspense fallback={<PageLoader />}>
       <Routes>
         {/* Public */}
-        <Route path="/login" element={currentUser ? <Navigate to={getDefaultRoute(currentUser.role)} replace /> : <LoginPage onLogin={handleLogin} />} />
+        <Route path="/login" element={currentUser ? <Navigate to="/dashboard" replace /> : <LoginPage onLogin={handleLogin} />} />
         <Route path="/reset-password" element={<ResetPasswordPage />} />
 
-        {/* ERP routes — SHOP_OWNER */}
-        <Route path="/dashboard" element={currentUser?.role === "SHOP_OWNER" ? <ERPShell><DashboardPage products={products} movements={movements} orders={orders} activeShopId={activeShopId} onNavigate={(p) => navigate("/" + p)} jobCards={jobCards} parties={parties} vehicles={vehicles} /></ERPShell> : <Navigate to={currentUser ? getDefaultRoute(currentUser.role) : "/login"} replace />} />
-        <Route path="/inventory" element={currentUser?.role === "SHOP_OWNER" ? <ERPShell><InventoryPage products={products} movements={movements} activeShopId={activeShopId} onAdd={() => setCatalogModal(true)} onEdit={(p) => setPModal({ open: true, product: p })} onSale={handleSale} onPurchase={handlePurchase} onAdjust={handleAdjustment} toast={toast} /></ERPShell> : <Navigate to={currentUser ? getDefaultRoute(currentUser.role) : "/login"} replace />} />
-        <Route path="/billing" element={currentUser?.role === "SHOP_OWNER" ? <ERPShell><POSBillingPage products={products} activeShopId={activeShopId} onMultiSale={handleMultiItemSale} toast={toast} /></ERPShell> : <Navigate to={currentUser ? getDefaultRoute(currentUser.role) : "/login"} replace />} />
-        <Route path="/parties" element={currentUser?.role === "SHOP_OWNER" ? <ERPShell><PartiesPage parties={parties} movements={movements} vehicles={vehicles} activeShopId={activeShopId} onSaveParty={(p) => { const exists = (parties || []).find((x) => x.id === p.id); saveParties(exists ? parties.map((x) => (x.id === p.id ? p : x)) : [...(parties || []), p]); logAudit(exists ? "PARTY_UPDATED" : "PARTY_CREATED", "party", p.id, p.name); }} onSaveVehicle={(v) => { const exists = (vehicles || []).find((x) => x.id === v.id); saveVehicles(exists ? vehicles.map((x) => (x.id === v.id ? v : x)) : [...(vehicles || []), v]); }} toast={toast} /></ERPShell> : <Navigate to={currentUser ? getDefaultRoute(currentUser.role) : "/login"} replace />} />
-        <Route path="/workshop" element={currentUser?.role === "SHOP_OWNER" ? <ERPShell><WorkshopPage jobCards={jobCards} vehicles={vehicles} parties={parties} products={products} activeShopId={activeShopId} onSaveJobCard={(jc) => { const exists = (jobCards || []).find((x) => x.id === jc.id); saveJobCards(exists ? jobCards.map((x) => (x.id === jc.id ? jc : x)) : [...(jobCards || []), jc]); logAudit(exists ? "JOB_CARD_UPDATED" : "JOB_CARD_CREATED", "job_card", jc.id, `${jc.jobNumber} — ${jc.status}`); }} toast={toast} /></ERPShell> : <Navigate to={currentUser ? getDefaultRoute(currentUser.role) : "/login"} replace />} />
-        <Route path="/history" element={currentUser?.role === "SHOP_OWNER" ? <ERPShell><HistoryPage movements={movements} activeShopId={activeShopId} /></ERPShell> : <Navigate to={currentUser ? getDefaultRoute(currentUser.role) : "/login"} replace />} />
-        <Route path="/reports" element={currentUser?.role === "SHOP_OWNER" ? <ERPShell><ReportsPage movements={movements} products={products} activeShopId={activeShopId} receipts={receipts} saveReceipts={saveReceipts} onPaymentReceipt={handlePaymentReceipt} toast={toast} /></ERPShell> : <Navigate to={currentUser ? getDefaultRoute(currentUser.role) : "/login"} replace />} />
-        <Route path="/orders" element={currentUser?.role === "SHOP_OWNER" ? <ERPShell><OrdersPage /></ERPShell> : <Navigate to={currentUser ? getDefaultRoute(currentUser.role) : "/login"} replace />} />
+        {/* MVP routes */}
+        <Route path="/dashboard" element={currentUser ? <ERPShell><DashboardPage products={products} movements={movements} orders={orders} activeShopId={activeShopId} onNavigate={(p) => navigate("/" + p)} jobCards={jobCards} parties={parties} vehicles={vehicles} /></ERPShell> : <Navigate to="/login" replace />} />
+        <Route path="/inventory" element={currentUser ? <ERPShell><InventoryPage products={products} movements={movements} activeShopId={activeShopId} onAdd={() => setCatalogModal(true)} onEdit={(p) => setPModal({ open: true, product: p })} onSale={handleSale} onPurchase={handlePurchase} onAdjust={handleAdjustment} toast={toast} /></ERPShell> : <Navigate to="/login" replace />} />
+        <Route path="/billing" element={currentUser ? <ERPShell><POSBillingPage products={products} activeShopId={activeShopId} onMultiSale={handleMultiItemSale} toast={toast} /></ERPShell> : <Navigate to="/login" replace />} />
+        <Route path="/history" element={currentUser ? <ERPShell><HistoryPage movements={movements} activeShopId={activeShopId} /></ERPShell> : <Navigate to="/login" replace />} />
+        <Route path="/reports" element={currentUser ? <ERPShell><ReportsPage movements={movements} products={products} activeShopId={activeShopId} receipts={receipts} saveReceipts={saveReceipts} onPaymentReceipt={handlePaymentReceipt} toast={toast} /></ERPShell> : <Navigate to="/login" replace />} />
 
-        {/* Marketplace routes */}
-        <Route path="/marketplace" element={currentUser ? <MPShell><MarketplaceHome /></MPShell> : <Navigate to="/login" replace />} />
-        <Route path="/marketplace/orders" element={currentUser ? <MPShell><OrderTrackingPage onBack={() => navigate("/marketplace")} /></MPShell> : <Navigate to="/login" replace />} />
-        <Route path="/marketplace/pricing" element={currentUser ? <MPShell><PricingPage onBack={() => navigate("/marketplace")} /></MPShell> : <Navigate to="/login" replace />} />
-        <Route path="/marketplace/checkout" element={currentUser ? <MPShell><CheckoutPage onBack={() => navigate("/marketplace")} onOrderPlaced={() => navigate("/marketplace/orders")} /></MPShell> : <Navigate to="/login" replace />} />
-
-        {/* Profile & Settings (authenticated) */}
-        <Route path="/profile" element={currentUser ? <ProfilePage user={currentUser} onUserUpdate={(u) => setCurrentUser(u)} /> : <Navigate to="/login" replace />} />
-        <Route path="/settings" element={currentUser ? <SettingsPage onLogout={handleLogout} /> : <Navigate to="/login" replace />} />
-
-        {/* Admin */}
-        <Route path="/admin" element={currentUser?.role === "PLATFORM_ADMIN" ? <AdminShell><AdminPage /></AdminShell> : <Navigate to={currentUser ? getDefaultRoute(currentUser.role) : "/login"} replace />} />
+        {/* Out-of-scope routes — redirect into MVP */}
+        <Route path="/parties" element={<Navigate to={currentUser ? "/dashboard" : "/login"} replace />} />
+        <Route path="/workshop" element={<Navigate to={currentUser ? "/dashboard" : "/login"} replace />} />
+        <Route path="/orders" element={<Navigate to={currentUser ? "/dashboard" : "/login"} replace />} />
+        <Route path="/marketplace" element={<Navigate to={currentUser ? "/dashboard" : "/login"} replace />} />
+        <Route path="/marketplace/orders" element={<Navigate to={currentUser ? "/dashboard" : "/login"} replace />} />
+        <Route path="/marketplace/pricing" element={<Navigate to={currentUser ? "/dashboard" : "/login"} replace />} />
+        <Route path="/marketplace/checkout" element={<Navigate to={currentUser ? "/dashboard" : "/login"} replace />} />
+        <Route path="/profile" element={<Navigate to={currentUser ? "/dashboard" : "/login"} replace />} />
+        <Route path="/settings" element={<Navigate to={currentUser ? "/dashboard" : "/login"} replace />} />
+        <Route path="/admin" element={<Navigate to={currentUser ? "/dashboard" : "/login"} replace />} />
 
         {/* Landing page — always public, logged-in users get an "Open App" nav */}
         <Route path="/" element={<LandingPage currentUser={currentUser} />} />
 
         {/* Catch-all */}
-        <Route path="*" element={<Navigate to={currentUser ? getDefaultRoute(currentUser.role) : "/login"} replace />} />
+        <Route path="*" element={<Navigate to={currentUser ? "/dashboard" : "/login"} replace />} />
       </Routes>
       </Suspense>
 
