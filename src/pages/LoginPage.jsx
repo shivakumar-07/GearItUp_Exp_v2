@@ -1,5 +1,5 @@
 import { useState, useRef } from "react";
-import { sendPhoneOtp, verifyPhoneOtp, signInWithGoogle } from "../firebase.js";
+import { sendPhoneOtp, verifyPhoneOtp, signInWithGoogle, isFirebaseConfigured, missingFirebaseEnvVars } from "../firebase.js";
 import { api, setTokens } from "../api/client.js";
 import { T, FONT } from "../theme.js";
 
@@ -168,6 +168,16 @@ const FEATURES = [
   { icon: "🔍", title: "Fitment-guaranteed search", desc: "Parts guaranteed to fit your exact vehicle" },
 ];
 
+const apiBaseUrl = import.meta.env.VITE_API_URL || "http://localhost:3001";
+const isLocalApi = /localhost|127\.0\.0\.1/i.test(apiBaseUrl);
+
+function getFirebaseConfigErrorMessage() {
+  const missing = missingFirebaseEnvVars.length > 0
+    ? ` Missing env vars: ${missingFirebaseEnvVars.join(", ")}.`
+    : "";
+  return `Firebase web auth is not configured for this frontend deployment.${missing} Add them in frontend environment settings and redeploy.`;
+}
+
 // ─── Component ─────────────────────────────────────────────────────────────
 
 export default function LoginPage({ onLogin }) {
@@ -211,9 +221,18 @@ export default function LoginPage({ onLogin }) {
     const iv = setInterval(() => setResendTimer(t => { if (t <= 1) { clearInterval(iv); return 0; } return t - 1; }), 1000);
   };
 
+  const ensureFirebaseAvailable = () => {
+    if (!isFirebaseConfigured && !isLocalApi) {
+      setError(getFirebaseConfigErrorMessage());
+      return false;
+    }
+    return true;
+  };
+
   // ── Send OTP ──
   const handleSendOtp = async () => {
     if (!phone || phone.length !== 10) { setError("Enter a valid 10-digit mobile number"); return; }
+    if (!ensureFirebaseAvailable()) return;
     setError(""); setLoading(true);
     try {
       const result = await sendPhoneOtp(phone, "recaptcha-container");
@@ -363,6 +382,7 @@ export default function LoginPage({ onLogin }) {
 
   // ── Google Sign-In ──
   const handleGoogleLogin = async () => {
+    if (!ensureFirebaseAvailable()) return;
     setError(""); setLoading(true);
     try {
       const { token } = await signInWithGoogle();
@@ -391,6 +411,12 @@ export default function LoginPage({ onLogin }) {
       console.error('[Login] Backend auth error:', e);
       if (e.code === 'NETWORK_ERROR' || e.message?.includes('Failed to fetch')) {
         throw new Error("Cannot reach the server. Please check if the backend is running on port 3001.");
+      }
+      if (e.code === 'DEV_TOKEN_NOT_ALLOWED') {
+        throw new Error(getFirebaseConfigErrorMessage());
+      }
+      if (e.code === 'INVALID_FIREBASE_ID_TOKEN') {
+        throw new Error("Invalid sign-in token. Please sign in again. If this persists, ensure frontend and backend use the same Firebase project configuration.");
       }
       throw new Error(e.data?.error?.message || e.data?.error || e.message || "Authentication failed. Please try again.");
     }

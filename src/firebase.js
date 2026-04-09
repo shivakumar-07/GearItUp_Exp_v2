@@ -17,8 +17,19 @@ const firebaseConfig = {
   measurementId: import.meta.env.VITE_FIREBASE_MEASUREMENT_ID || "",
 };
 
+const requiredFirebaseEnv = [
+  ['VITE_FIREBASE_API_KEY', firebaseConfig.apiKey],
+  ['VITE_FIREBASE_AUTH_DOMAIN', firebaseConfig.authDomain],
+  ['VITE_FIREBASE_PROJECT_ID', firebaseConfig.projectId],
+  ['VITE_FIREBASE_APP_ID', firebaseConfig.appId],
+];
+
+export const missingFirebaseEnvVars = requiredFirebaseEnv
+  .filter(([, value]) => !value)
+  .map(([name]) => name);
+
 // Check if Firebase is configured
-const isFirebaseConfigured = firebaseConfig.apiKey && firebaseConfig.apiKey !== "";
+const isFirebaseConfigured = missingFirebaseEnvVars.length === 0;
 
 let app, auth;
 
