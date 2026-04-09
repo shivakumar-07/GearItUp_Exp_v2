@@ -349,6 +349,13 @@ function AppContent() {
 
   // ── Auth handlers ──
   const handleLogin = useCallback((user) => {
+    let lastUserId = null;
+    try { lastUserId = localStorage.getItem("as_last_user_id"); } catch {}
+
+    if (lastUserId && user?.userId && lastUserId !== user.userId) {
+      clearStore();
+    }
+
     setCurrentUser(user);
     // Propagate the real shopId from the DB so all API calls and store filters
     // use the correct UUID (not the hardcoded "s1" seed default).
@@ -357,23 +364,30 @@ function AppContent() {
       try { localStorage.setItem("vl_shopId", user.shopId); } catch {}
       try { localStorage.setItem("as_user", JSON.stringify(user)); } catch {}
     }
+    if (user?.userId) {
+      try { localStorage.setItem("as_last_user_id", user.userId); } catch {}
+    }
     navigate("/dashboard", { replace: true });
-  }, [navigate, setActiveShopId]);
+  }, [navigate, setActiveShopId, clearStore]);
 
   const handleLogout = useCallback(() => {
     // Revoke the refresh token in the backend (fire-and-forget)
     const rt = localStorage.getItem("as_refresh_token");
     api.post("/api/auth/logout", { refreshToken: rt }).catch(() => {});
     
-    // Clear both auth tokens and application store data
+    // Clear auth/session only. Keep vl_* app data so inventory/POS history
+    // remains available after the same user logs back in.
     clearTokens();
-    clearStore(); // Wipes all vl_* from localStorage and state
+
+    if (currentUser?.userId) {
+      try { localStorage.setItem("as_last_user_id", currentUser.userId); } catch {}
+    }
     
     localStorage.removeItem("as_user");
     localStorage.removeItem("as_refresh_token");
     setCurrentUser(null);
     navigate("/login", { replace: true });
-  }, [navigate, clearStore]);
+  }, [navigate, currentUser]);
 
   // ── Business handlers ──
   const saveProduct = useCallback((p) => {
