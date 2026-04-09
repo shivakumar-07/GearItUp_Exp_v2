@@ -1,4 +1,4 @@
-# GearItUp — AutoSpace ⚙️
+# GearItUp — redpiston ⚙️
 
 > **The OS for India's Auto Parts Industry.**  
 > A hyper-modern B2B2C SaaS platform bridging the gap between traditional auto part retailers (ERP/POS) and the digital consumer market (Marketplace).
@@ -11,7 +11,7 @@
 
 ## 🌟 The Core Value Proposition
 
-AutoSpace is designed for the 98% of Indian auto parts retailers who still rely on manual registers or outdated offline software. 
+redpiston is designed for the 98% of Indian auto parts retailers who still rely on manual registers or outdated offline software. 
 
 1.  **For Shop Owners**: A lightning-fast, keyboard-driven ERP that handles multi-item GST billing, instant stock tracking, party ledgers (Udhaar), and staff management.
 2.  **For Customers**: A hyperlocal marketplace to find parts with a **Fitment Guarantee** based on their specific vehicle (Make → Model → Year → Variant).

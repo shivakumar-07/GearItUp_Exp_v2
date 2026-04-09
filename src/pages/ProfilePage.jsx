@@ -672,7 +672,7 @@ export function ProfilePage({ user, onUserUpdate }) {
                   {inviting ? "Adding..." : "Add Staff"}
                 </button>
               </div>
-              <div style={{ fontSize: 11, color: T.t3, marginTop: 8 }}>Staff must already have an AutoSpace account. They will get immediate access.</div>
+              <div style={{ fontSize: 11, color: T.t3, marginTop: 8 }}>Staff must already have a redpiston account. They will get immediate access.</div>
             </div>
 
             {/* Staff list */}

@@ -84,7 +84,7 @@ export default function ResetPasswordPage() {
         <div style={S.card}>
           <div style={S.logo}>
             <div style={S.logoMark}>⚙️</div>
-            <span style={S.logoText}>AutoSpace</span>
+            <span style={S.logoText}>redpiston</span>
           </div>
           <div style={S.heading}>Invalid Link</div>
           <div style={S.sub}>This password reset link is missing or invalid.</div>
@@ -99,7 +99,7 @@ export default function ResetPasswordPage() {
       <div style={S.card}>
         <div style={S.logo}>
           <div style={S.logoMark}>⚙️</div>
-          <span style={S.logoText}>AutoSpace</span>
+          <span style={S.logoText}>redpiston</span>
         </div>
 
         {success ? (

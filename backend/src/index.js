@@ -81,6 +81,6 @@ app.use((req, res) => res.status(404).json({ error: 'Route not found' }));
 app.use(errorHandler);
 
 app.listen(PORT, () => {
-  console.log(`AutoSpace backend running on http://localhost:${PORT}`);
+  console.log(`redpiston backend running on http://localhost:${PORT}`);
   console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);
 });

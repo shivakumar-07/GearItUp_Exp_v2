@@ -19,7 +19,7 @@ function getResendClient() {
       try {
         const resend = getResendClient();
         const senderEmail = process.env.RESEND_SENDER_EMAIL;
-        const senderName = process.env.RESEND_SENDER_NAME || 'AutoSpace';
+        const senderName = process.env.RESEND_SENDER_NAME || 'redpiston';
         if (!senderEmail) {
           throw new Error('Missing RESEND_SENDER_EMAIL in backend environment');
         }
@@ -46,7 +46,7 @@ function baseTemplate(content) {
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>AutoSpace</title>
+  <title>redpiston</title>
 </head>
 <body style="margin:0;padding:0;background:#0A0F1D;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;">
   <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#0A0F1D;padding:40px 20px;">
@@ -62,7 +62,7 @@ function baseTemplate(content) {
                     &#9881;
                   </td>
                   <td style="padding-left:12px;font-size:20px;font-weight:800;color:#F3F4F6;letter-spacing:-0.5px;">
-                    AutoSpace
+                    redpiston
                   </td>
                 </tr>
               </table>
@@ -78,10 +78,10 @@ function baseTemplate(content) {
           <tr>
             <td style="padding:20px 40px;border-top:1px solid #1F2937;">
               <p style="margin:0;font-size:12px;color:#6B7280;line-height:1.5;">
-                This email was sent by AutoSpace. If you didn't request this, you can safely ignore it.
+                This email was sent by redpiston. If you didn't request this, you can safely ignore it.
               </p>
               <p style="margin:8px 0 0;font-size:11px;color:#4B5563;">
-                &copy; ${new Date().getFullYear()} AutoSpace &mdash; India's Auto Parts Platform
+                &copy; ${new Date().getFullYear()} redpiston &mdash; India's Auto Parts Platform
               </p>
             </td>
           </tr>
@@ -168,7 +168,7 @@ function welcomeEmailHtml(name) {
   const displayName = name || 'there';
   return baseTemplate(`
     <h1 style="margin:0 0 8px;font-size:22px;font-weight:800;color:#F3F4F6;">
-      Welcome to AutoSpace!
+      Welcome to redpiston!
     </h1>
     <p style="margin:0 0 24px;font-size:15px;color:#9CA3AF;line-height:1.6;">
       Hey ${displayName}, your account is all set. Here's what you can do:
@@ -251,9 +251,9 @@ export async function sendEmailOtp(email) {
 
   await sendMail({
     to: email,
-    subject: `${code} — Verify your AutoSpace email`,
+    subject: `${code} — Verify your redpiston email`,
     html: otpEmailHtml(code),
-    text: `Your AutoSpace verification code is: ${code}\n\nThis code expires in 10 minutes. If you didn't request this, ignore this email.`,
+    text: `Your redpiston verification code is: ${code}\n\nThis code expires in 10 minutes. If you didn't request this, ignore this email.`,
   });
 
   return code;
@@ -296,7 +296,7 @@ export async function sendPasswordResetEmail(email, token) {
 
   await sendMail({
     to: email,
-    subject: 'Reset your AutoSpace password',
+    subject: 'Reset your redpiston password',
     html: passwordResetHtml(resetUrl),
     text: `Reset your password by visiting: ${resetUrl}\n\nThis link expires in 1 hour. If you didn't request this, ignore this email.`,
   });
@@ -308,9 +308,9 @@ export async function sendPasswordResetEmail(email, token) {
 export async function sendWelcomeEmail(email, name) {
   await sendMail({
     to: email,
-    subject: `Welcome to AutoSpace${name ? `, ${name}` : ''}!`,
+    subject: `Welcome to redpiston${name ? `, ${name}` : ''}!`,
     html: welcomeEmailHtml(name),
-    text: `Welcome to AutoSpace${name ? `, ${name}` : ''}! Your account is ready. Browse parts, compare shops, and order online.`,
+    text: `Welcome to redpiston${name ? `, ${name}` : ''}! Your account is ready. Browse parts, compare shops, and order online.`,
   });
 }
 
@@ -320,8 +320,8 @@ export async function sendWelcomeEmail(email, name) {
 export async function sendPasswordChangedEmail(email) {
   await sendMail({
     to: email,
-    subject: 'Your AutoSpace password was changed',
+    subject: 'Your redpiston password was changed',
     html: passwordChangedHtml(),
-    text: `Your AutoSpace password was successfully changed. If you didn't do this, your account may be compromised. Reset your password immediately.`,
+    text: `Your redpiston password was successfully changed. If you didn't do this, your account may be compromised. Reset your password immediately.`,
   });
 }

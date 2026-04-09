@@ -500,7 +500,7 @@ export default function LoginPage({ onLogin }) {
       case STEPS.ROLE:
         return (
           <div className="auth-card">
-            <div style={S.stepLabel}>Welcome to AutoSpace</div>
+            <div style={S.stepLabel}>Welcome to redpiston</div>
             <div style={S.heading}>Who are you?</div>
             <div style={S.sub}>Select your role to get the right experience.</div>
 
@@ -953,7 +953,7 @@ export default function LoginPage({ onLogin }) {
           <div>
             <div style={S.logo}>
               <div style={S.logoMark}>⚙️</div>
-              <span style={S.logoText}>AutoSpace</span>
+              <span style={S.logoText}>redpiston</span>
             </div>
             <div style={S.tagline}>The smart platform for India's auto parts trade</div>
             <div style={S.featureList}>

@@ -4,7 +4,7 @@ import { getAuth, RecaptchaVerifier, signInWithPhoneNumber, GoogleAuthProvider, 
 // Firebase config — fill these from Firebase Console → Project Settings → Your Apps → Web App
 // Steps:
 //  1. Go to console.firebase.google.com
-//  2. Create project "autospace-prod"
+//  2. Create project "redpiston-prod"
 //  3. Enable Authentication → Sign-in methods → Phone + Google
 //  4. Add Web App → copy config below
 const firebaseConfig = {
@@ -70,7 +70,7 @@ export async function verifyPhoneOtp(confirmationResult, otp) {
 // Google Sign-In and get Firebase token
 export async function signInWithGoogle() {
   if (!isFirebaseConfigured) {
-    return { token: 'dev-google:demo@autospace.in', dev: true };
+    return { token: 'dev-google:demo@redpiston.in', dev: true };
   }
   const provider = new GoogleAuthProvider();
   const result = await signInWithPopup(auth, provider);
