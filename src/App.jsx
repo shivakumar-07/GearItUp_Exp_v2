@@ -1064,7 +1064,8 @@ function AppContent() {
       <Suspense fallback={<PageLoader />}>
       <Routes>
         {/* Public */}
-        <Route path="/login" element={currentUser ? <Navigate to="/dashboard" replace /> : <LoginPage onLogin={handleLogin} />} />
+        <Route path="/login" element={currentUser ? <Navigate to="/dashboard" replace /> : <LoginPage key="login" mode="login" onLogin={handleLogin} />} />
+        <Route path="/signup" element={currentUser ? <Navigate to="/dashboard" replace /> : <LoginPage key="signup" mode="signup" onLogin={handleLogin} />} />
         <Route path="/reset-password" element={<ResetPasswordPage />} />
 
         {/* MVP routes */}

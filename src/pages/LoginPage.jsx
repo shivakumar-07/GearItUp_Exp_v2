@@ -1,6 +1,7 @@
 import { useState, useRef } from "react";
+import { Link } from "react-router-dom";
 import { sendPhoneOtp, verifyPhoneOtp, signInWithGoogle, isFirebaseConfigured, missingFirebaseEnvVars } from "../firebase.js";
-import { api, setTokens } from "../api/client.js";
+import { api, setTokens, clearTokens } from "../api/client.js";
 import { T, FONT } from "../theme.js";
 
 /**
@@ -16,6 +17,7 @@ import { T, FONT } from "../theme.js";
  */
 
 const STEPS = { ROLE: "role", AUTH: "auth", OTP: "otp", PROFILE: "profile" };
+const AUTH_FLOWS = { LOGIN: "login", SIGNUP: "signup" };
 
 // ─── Error message helper ──────────────────────────────────────────────────
 function getErrorMessage(e, fallback = "Something went wrong. Please try again.") {
@@ -180,8 +182,11 @@ function getFirebaseConfigErrorMessage() {
 
 // ─── Component ─────────────────────────────────────────────────────────────
 
-export default function LoginPage({ onLogin }) {
-  const [step, setStep] = useState(STEPS.ROLE);
+export default function LoginPage({ onLogin, mode = AUTH_FLOWS.LOGIN }) {
+  const authFlow = mode === AUTH_FLOWS.SIGNUP ? AUTH_FLOWS.SIGNUP : AUTH_FLOWS.LOGIN;
+  const isSignupFlow = authFlow === AUTH_FLOWS.SIGNUP;
+
+  const [step, setStep] = useState(isSignupFlow ? STEPS.ROLE : STEPS.AUTH);
   const [role, setRole] = useState(null);          // "shop" | "customer"
   const [phone, setPhone] = useState("");
   const [otp, setOtp] = useState(["", "", "", "", "", ""]);
@@ -194,7 +199,6 @@ export default function LoginPage({ onLogin }) {
 
   // Email auth state
   const [authTab, setAuthTab] = useState("phone"); // "phone" | "email"
-  const [emailMode, setEmailMode] = useState("login"); // "login" | "signup"
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
@@ -231,6 +235,11 @@ export default function LoginPage({ onLogin }) {
 
   // ── Send OTP ──
   const handleSendOtp = async () => {
+    if (isSignupFlow && !role) {
+      setError("Please select your role before signing up.");
+      setStep(STEPS.ROLE);
+      return;
+    }
     if (!phone || phone.length !== 10) { setError("Enter a valid 10-digit mobile number"); return; }
     if (!ensureFirebaseAvailable()) return;
     setError(""); setLoading(true);
@@ -245,6 +254,15 @@ export default function LoginPage({ onLogin }) {
 
   // ── Email Register ──
   const handleEmailRegister = async () => {
+    if (!isSignupFlow) {
+      setError("This is the login flow. Use Sign up to create a new account.");
+      return;
+    }
+    if (!role) {
+      setError("Please select your role before signing up.");
+      setStep(STEPS.ROLE);
+      return;
+    }
     if (!email) { setError("Enter your email address"); return; }
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) { setError("Enter a valid email address"); return; }
     if (!password || password.length < 8) { setError("Password must be at least 8 characters"); return; }
@@ -406,11 +424,18 @@ export default function LoginPage({ onLogin }) {
   const loginWithBackend = async (firebaseToken) => {
     let data;
     try {
-      data = await api.post("/api/auth/firebase", { firebaseToken, role });
+      data = await api.post("/api/auth/firebase", {
+        firebaseToken,
+        role: isSignupFlow ? role : undefined,
+        intent: authFlow,
+      });
     } catch (e) {
       console.error('[Login] Backend auth error:', e);
       if (e.code === 'NETWORK_ERROR' || e.message?.includes('Failed to fetch')) {
         throw new Error("Cannot reach the server. Please check if the backend is running on port 3001.");
+      }
+      if (e.code === 'ACCOUNT_NOT_FOUND') {
+        throw new Error("No account found for this sign-in method. Please use Sign up.");
       }
       if (e.code === 'DEV_TOKEN_NOT_ALLOWED') {
         throw new Error(getFirebaseConfigErrorMessage());
@@ -432,6 +457,11 @@ export default function LoginPage({ onLogin }) {
     }
 
     setTokens(accessToken, refreshToken);
+
+    if (newUserFlag && !isSignupFlow) {
+      clearTokens();
+      throw new Error("No account found for this sign-in method. Please sign up first.");
+    }
 
     if (newUserFlag) {
       // New user — collect profile
@@ -489,6 +519,10 @@ export default function LoginPage({ onLogin }) {
     if (e.key === "Enter") handleVerifyOtp();
   };
 
+  const progressSteps = isSignupFlow
+    ? [STEPS.ROLE, STEPS.AUTH, STEPS.OTP, STEPS.PROFILE]
+    : [STEPS.AUTH, STEPS.OTP];
+
   // ─────────────────────────────────────────────────
   //  RENDER
   // ─────────────────────────────────────────────────
@@ -498,11 +532,12 @@ export default function LoginPage({ onLogin }) {
 
       // ── STEP 1: Role selection ──
       case STEPS.ROLE:
+        if (!isSignupFlow) return null;
         return (
           <div className="auth-card">
             <div style={S.stepLabel}>Welcome to redpiston</div>
-            <div style={S.heading}>Who are you?</div>
-            <div style={S.sub}>Select your role to get the right experience.</div>
+            <div style={S.heading}>Create your account</div>
+            <div style={S.sub}>Select your role to start the signup flow.</div>
 
             <div style={S.roleGrid}>
               <div
@@ -535,7 +570,10 @@ export default function LoginPage({ onLogin }) {
             </button>
 
             <div style={{ textAlign: "center", fontSize: 13, color: T.t3 }}>
-              Works for both sign in &amp; sign up
+              Already have an account?{" "}
+              <Link to="/login" style={{ ...S.resendBtn, textDecoration: "none" }}>
+                Log in
+              </Link>
             </div>
           </div>
         );
@@ -544,10 +582,29 @@ export default function LoginPage({ onLogin }) {
       case STEPS.AUTH:
         return (
           <div className="auth-card">
-            <button style={S.btnBack} onClick={() => { setStep(STEPS.ROLE); setError(""); setShowForgotPassword(false); setForgotSent(false); }}>← Back</button>
-            <div style={S.stepLabel}>{role === "shop" ? "Shop Owner" : "Customer / Mechanic"}</div>
-            <div style={S.heading}>Sign in or Sign up</div>
-            <div style={S.sub}>Choose your preferred login method.</div>
+            {isSignupFlow ? (
+              <button style={S.btnBack} onClick={() => { setStep(STEPS.ROLE); setError(""); setShowForgotPassword(false); setForgotSent(false); }}>
+                ← Back
+              </button>
+            ) : (
+              <Link to="/" style={{ ...S.btnBack, textDecoration: "none" }}>
+                ← Home
+              </Link>
+            )}
+
+            <div style={S.stepLabel}>
+              {isSignupFlow
+                ? (role === "shop" ? "Shop Owner Signup" : role === "customer" ? "Customer Signup" : "Create account")
+                : "Login"
+              }
+            </div>
+            <div style={S.heading}>{isSignupFlow ? "Create your account" : "Log in to redpiston"}</div>
+            <div style={S.sub}>
+              {isSignupFlow
+                ? "Choose your preferred signup method."
+                : "Use your existing account credentials to continue."
+              }
+            </div>
 
             {/* Tab toggle: Phone | Email */}
             <div style={{ display: "flex", gap: 0, marginBottom: 20, background: T.surface, borderRadius: 10, border: `1.5px solid ${T.border}`, overflow: "hidden" }}>
@@ -628,13 +685,13 @@ export default function LoginPage({ onLogin }) {
                   onClick={handleSendOtp}
                   disabled={loading || phone.length !== 10}
                 >
-                  {loading ? "Sending OTP..." : "Send OTP →"}
+                  {loading ? "Sending OTP..." : (isSignupFlow ? "Send OTP to Sign Up →" : "Send OTP to Log In →")}
                 </button>
               </>
             )}
 
             {/* ─── EMAIL TAB ─── */}
-            {authTab === "email" && !showForgotPassword && (
+            {authTab === "email" && !(showForgotPassword && !isSignupFlow) && (
               <>
                 <label style={S.label}>Email address</label>
                 <input
@@ -644,7 +701,7 @@ export default function LoginPage({ onLogin }) {
                   placeholder="you@example.com"
                   value={email}
                   onChange={e => setEmail(e.target.value)}
-                  onKeyDown={e => e.key === "Enter" && (emailMode === "login" ? handleEmailLogin() : handleEmailRegister())}
+                  onKeyDown={e => e.key === "Enter" && (isSignupFlow ? handleEmailRegister() : handleEmailLogin())}
                   autoFocus
                 />
 
@@ -652,12 +709,12 @@ export default function LoginPage({ onLogin }) {
                 <div style={S.passwordWrap}>
                   <input
                     className="auth-input"
-                    style={{ ...S.inputBase, ...S.passwordInput, marginBottom: emailMode === "signup" ? 12 : 8 }}
+                    style={{ ...S.inputBase, ...S.passwordInput, marginBottom: isSignupFlow ? 12 : 8 }}
                     type={showPassword ? "text" : "password"}
-                    placeholder={emailMode === "signup" ? "Min 8 chars, upper, lower, digit, special" : "Enter your password"}
+                    placeholder={isSignupFlow ? "Min 8 chars, upper, lower, digit, special" : "Enter your password"}
                     value={password}
                     onChange={e => setPassword(e.target.value)}
-                    onKeyDown={e => e.key === "Enter" && (emailMode === "login" ? handleEmailLogin() : handleEmailRegister())}
+                    onKeyDown={e => e.key === "Enter" && (isSignupFlow ? handleEmailRegister() : handleEmailLogin())}
                   />
                   <button
                     type="button"
@@ -669,7 +726,7 @@ export default function LoginPage({ onLogin }) {
                   </button>
                 </div>
 
-                {emailMode === "signup" && (
+                {isSignupFlow && (
                   <>
                     <label style={S.label}>Confirm password</label>
                     <div style={S.passwordWrap}>
@@ -694,7 +751,7 @@ export default function LoginPage({ onLogin }) {
                   </>
                 )}
 
-                {emailMode === "login" && (
+                {!isSignupFlow && (
                   <div style={{ textAlign: "right", marginBottom: 16 }}>
                     <button
                       style={{ ...S.resendBtn, fontSize: 12 }}
@@ -707,28 +764,34 @@ export default function LoginPage({ onLogin }) {
 
                 <button
                   className="auth-btn-primary"
-                  style={S.btnPrimary(loading || !email || !password)}
-                  onClick={emailMode === "login" ? handleEmailLogin : handleEmailRegister}
-                  disabled={loading || !email || !password}
+                  style={S.btnPrimary(loading || !email || !password || (isSignupFlow && !confirmPassword))}
+                  onClick={isSignupFlow ? handleEmailRegister : handleEmailLogin}
+                  disabled={loading || !email || !password || (isSignupFlow && !confirmPassword)}
                 >
                   {loading
-                    ? (emailMode === "login" ? "Logging in..." : "Creating account...")
-                    : (emailMode === "login" ? "Log In →" : "Create Account →")
+                    ? (isSignupFlow ? "Creating account..." : "Logging in...")
+                    : (isSignupFlow ? "Create Account →" : "Log In →")
                   }
                 </button>
 
                 <div style={{ textAlign: "center", fontSize: 13, color: T.t3, marginTop: 4 }}>
-                  {emailMode === "login" ? (
-                    <>Don't have an account?{" "}<button style={S.resendBtn} onClick={() => { setEmailMode("signup"); setError(""); }}>Sign up</button></>
+                  {isSignupFlow ? (
+                    <>
+                      Already have an account?{" "}
+                      <Link to="/login" style={{ ...S.resendBtn, textDecoration: "none" }}>Log in</Link>
+                    </>
                   ) : (
-                    <>Already have an account?{" "}<button style={S.resendBtn} onClick={() => { setEmailMode("login"); setError(""); }}>Log in</button></>
+                    <>
+                      Need a new account?{" "}
+                      <Link to="/signup" style={{ ...S.resendBtn, textDecoration: "none" }}>Sign up</Link>
+                    </>
                   )}
                 </div>
               </>
             )}
 
             {/* ─── FORGOT PASSWORD ─── */}
-            {authTab === "email" && showForgotPassword && (
+            {authTab === "email" && !isSignupFlow && showForgotPassword && (
               <>
                 {forgotSent ? (
                   <div style={{ textAlign: "center", padding: "20px 0" }}>
@@ -786,7 +849,7 @@ export default function LoginPage({ onLogin }) {
             )}
 
             {/* ─── OR divider + Google (always visible) ─── */}
-            {!(authTab === "email" && showForgotPassword) && (
+            {!(authTab === "email" && showForgotPassword && !isSignupFlow) && (
               <>
                 <div style={S.orRow}>
                   <div style={S.orLine} /><span style={S.orText}>OR</span><div style={S.orLine} />
@@ -794,7 +857,7 @@ export default function LoginPage({ onLogin }) {
 
                 <button className="auth-btn-google" style={S.btnGoogle} onClick={handleGoogleLogin} disabled={loading}>
                   <GoogleIcon />
-                  Continue with Google
+                  {isSignupFlow ? "Sign up with Google" : "Continue with Google"}
                 </button>
               </>
             )}
@@ -805,14 +868,23 @@ export default function LoginPage({ onLogin }) {
 
       // ── STEP 3: OTP verification (phone or email) ──
       case STEPS.OTP: {
-        const isEmailVerify = authTab === "email";
+        const isEmailVerify = isSignupFlow && authTab === "email";
         const currentOtp = isEmailVerify ? emailOtp : otp;
         const currentRefs = isEmailVerify ? emailOtpRefs : otpRefs;
         const handleChange = isEmailVerify ? handleEmailOtpChange : handleOtpChange;
         const handleKey = isEmailVerify ? handleEmailOtpKey : handleOtpKey;
         const handleVerify = isEmailVerify ? handleVerifyEmailOtp : handleVerifyOtp;
         const handleResend = isEmailVerify
-          ? async () => { setLoading(true); try { await api.post("/api/auth/resend-verification", { email }); startResendTimer(); } catch {} setLoading(false); }
+          ? async () => {
+            setLoading(true);
+            try {
+              await api.post("/api/auth/resend-verification", { email });
+              startResendTimer();
+            } catch (e) {
+              setError(getErrorMessage(e, "Could not resend verification code. Try again."));
+            }
+            setLoading(false);
+          }
           : handleSendOtp;
 
         return (
@@ -979,17 +1051,16 @@ export default function LoginPage({ onLogin }) {
           <div style={S.card}>
             {/* Progress dots */}
             <div style={{ display: "flex", gap: 6, marginBottom: 32 }}>
-              {[STEPS.ROLE, STEPS.AUTH, STEPS.OTP, STEPS.PROFILE].map((s, i) => {
-                const stepOrder = [STEPS.ROLE, STEPS.AUTH, STEPS.OTP, STEPS.PROFILE];
-                const current = stepOrder.indexOf(step);
-                const idx = stepOrder.indexOf(s);
+              {progressSteps.map((s) => {
+                const current = progressSteps.indexOf(step);
+                const idx = progressSteps.indexOf(s);
                 const active = idx === current;
                 const done = idx < current;
-                // Skip OTP dot if Google was used
-                if (s === STEPS.OTP && step === STEPS.PROFILE && !phone) return null;
                 return (
                   <div key={s} style={{
-                    height: 4, flex: s === STEPS.ROLE ? 0.5 : 1, borderRadius: 2,
+                    height: 4,
+                    flex: s === STEPS.ROLE ? 0.5 : 1,
+                    borderRadius: 2,
                     background: done ? T.amber : active ? T.amber : T.border,
                     opacity: active ? 1 : done ? 0.7 : 0.3,
                     transition: "all 0.3s",
