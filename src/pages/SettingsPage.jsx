@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
-import { api, clearTokens } from "../api/client.js";
+import { api } from "../api/client.js";
 import { T, FONT } from "../theme.js";
 
 const S = {
@@ -95,16 +95,18 @@ export function SettingsPage({ onLogout }) {
   const [showNewPassword, setShowNewPassword] = useState(false);
   const [showConfirmNewPassword, setShowConfirmNewPassword] = useState(false);
 
-  useEffect(() => { loadSettings(); }, []);
-
-  const loadSettings = async () => {
+  async function loadSettings() {
     try {
       const res = await api.get("/api/auth/me/settings");
       const data = res.data || res;
       if (data) setSettings(data);
-    } catch {}
+    } catch (err) {
+      console.warn("[Settings] Unable to load settings:", err?.message || err);
+    }
     setLoading(false);
-  };
+  }
+
+  useEffect(() => { loadSettings(); }, []);
 
   const showToast = (msg) => { setToast(msg); setTimeout(() => setToast(""), 3000); };
 
@@ -136,10 +138,13 @@ export function SettingsPage({ onLogout }) {
   const handleLogoutAll = async () => {
     if (!confirm("This will log you out from all devices. Continue?")) return;
     try {
+      if (onLogout) {
+        const ok = await onLogout({ logoutAll: true });
+        if (ok === false) return;
+        return;
+      }
+
       await api.post("/api/auth/logout-all");
-      clearTokens();
-      localStorage.removeItem("as_user");
-      if (onLogout) onLogout();
       navigate("/login", { replace: true });
     } catch (e) {
       setError(e.data?.error?.message || "Failed to logout all devices");

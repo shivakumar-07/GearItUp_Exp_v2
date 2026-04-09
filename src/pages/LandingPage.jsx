@@ -721,7 +721,7 @@ export function LandingPage({ currentUser }) {
 
           {/* Feature grid */}
           <div className="feat-3col" style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:18,marginBottom:68}}>
-            {feats.map((f,i)=>(
+            {feats.map((f)=>(
               <div key={f.t} className="feat-card">
                 <div style={{width:46,height:46,borderRadius:13,marginBottom:18,background:`${f.c}18`,border:`1px solid ${f.c}30`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:22}}>{f.icon}</div>
                 <h3 style={{fontSize:16,fontWeight:800,color:T.t1,marginBottom:9,letterSpacing:"-0.02em"}}>{f.t}</h3>

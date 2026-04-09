@@ -1,13 +1,27 @@
-import { useState, useCallback, useEffect, Component, createContext, useContext, useMemo, lazy, Suspense } from "react";
+import { useState, useCallback, useEffect, useRef, Component, useContext, useMemo, lazy, Suspense } from "react";
 import { Routes, Route, Navigate, useNavigate, useLocation } from "react-router-dom";
 import { T, FONT, GLOBAL_CSS } from "./theme";
 import { fmt, uid } from "./utils";
 import { useStore } from "./store";
 import { Toast, useToast, Btn } from "./components/ui";
 import { setTokens, clearTokens, api } from "./api/client.js";
-import { syncInvoice, syncPurchase, syncAdjustment } from "./api/sync.js";
+import {
+  syncInvoice,
+  syncPurchase,
+  syncAdjustment,
+  syncProductSave,
+  setSyncScope,
+  getSyncStatus,
+  subscribeSyncStatus,
+  flushSyncQueue,
+  getSyncQueueSnapshot,
+  retrySyncQueueItem,
+  discardSyncQueueItem,
+} from "./api/sync.js";
 import { ShortcutOverlay } from "./components/ShortcutOverlay";
 import { CommandPalette } from "./components/CommandPalette";
+import { SyncCenterModal } from "./components/SyncCenterModal";
+import { AppCtx } from "./appContext";
 
 // Always-loaded: auth, shell chrome, modals (needed on first render)
 import { ProfileDropdown } from "./components/ProfileDropdown";
@@ -83,9 +97,110 @@ const NAV_ITEMS = [
   { key: "reports", path: "/reports", icon: "📊", label: "Reports" },
 ];
 
-// ========== SHARED CONTEXT (avoids passing props through closure) ==========
-// Defined at module level so the reference is stable across renders.
-export const AppCtx = createContext(null);
+const DAY_MS = 86400000;
+const SALES_CUTOFF_REFRESH_MS = 60000;
+const APP_BOOT_TS = Date.now();
+
+function SyncStatusPill({ status, onOpenCenter, onSyncNow }) {
+  const pending = Number(status?.pendingCount || 0);
+  const syncing = Boolean(status?.isSyncing);
+  const offline = status?.isOnline === false;
+  const lastSyncedLabel = status?.lastSyncedAt
+    ? new Date(status.lastSyncedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
+    : null;
+
+  let label = "Synced";
+  let color = T.emerald;
+  let background = T.emeraldBg;
+
+  if (offline && pending > 0) {
+    label = `Offline · ${pending} pending`;
+    color = T.crimson;
+    background = T.crimsonBg;
+  } else if (syncing) {
+    label = pending > 0 ? `Syncing ${pending}...` : "Syncing...";
+    color = T.sky;
+    background = T.skyBg;
+  } else if (pending > 0) {
+    label = `${pending} pending`;
+    color = T.amber;
+    background = T.amberGlow;
+  } else if (lastSyncedLabel) {
+    label = `Synced ${lastSyncedLabel}`;
+  }
+
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+      <button
+        onClick={() => onOpenCenter?.()}
+        title="Open Sync Center"
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 8,
+          borderRadius: 999,
+          border: `1px solid ${color}44`,
+          background,
+          color,
+          fontSize: 11,
+          fontWeight: 700,
+          padding: "5px 10px",
+          fontFamily: FONT.ui,
+          cursor: "pointer",
+          transition: "all 0.15s ease",
+        }}
+      >
+        {syncing ? (
+          <span
+            style={{
+              width: 10,
+              height: 10,
+              borderRadius: "50%",
+              border: `2px solid ${color}`,
+              borderTopColor: "transparent",
+              animation: "spin 0.85s linear infinite",
+            }}
+          />
+        ) : (
+          <span
+            style={{
+              width: 7,
+              height: 7,
+              borderRadius: "50%",
+              background: color,
+              boxShadow: `0 0 8px ${color}88`,
+              animation: pending > 0 ? "pulse 1.1s ease-in-out infinite" : "none",
+            }}
+          />
+        )}
+        <span>{label}</span>
+        {pending > 0 && <span style={{ fontSize: 10, opacity: 0.9 }}>Queue</span>}
+      </button>
+
+      {pending > 0 && !syncing && (
+        <button
+          onClick={() => onSyncNow?.()}
+          title="Sync pending changes now"
+          style={{
+            width: 26,
+            height: 26,
+            borderRadius: 8,
+            border: `1px solid ${T.amber}55`,
+            background: T.amberGlow,
+            color: T.amber,
+            fontSize: 14,
+            fontWeight: 900,
+            lineHeight: 1,
+            cursor: "pointer",
+            animation: "pulse 1.6s ease-in-out infinite",
+          }}
+        >
+          ↻
+        </button>
+      )}
+    </div>
+  );
+}
 
 // ========== ERP SHELL ==========
 // Defined at MODULE LEVEL so React sees a stable component type on every render.
@@ -96,6 +211,11 @@ function ERPShell({ children }) {
     pModal, setPModal, catalogModal, setCatalogModal,
     toast, toasts, removeToast,
     currentUser, handleLogout,
+    syncStatus, syncNow,
+    openSyncCenter,
+    syncCenterOpen, setSyncCenterOpen,
+    syncQueueItems, syncActionBusy, syncItemBusy,
+    handleRetrySyncItem, handleDiscardSyncItem,
     saveProduct, handleBulkStockIn,
   } = useContext(AppCtx);
 
@@ -103,8 +223,17 @@ function ERPShell({ children }) {
   const navigate = useNavigate();
   const location = useLocation();
   const [shopEdit, setShopEdit] = useState(null);
+  const [salesCutoffTs, setSalesCutoffTs] = useState(() => APP_BOOT_TS - DAY_MS);
 
-  const todaySales = useMemo(() => (movements || []).filter((m) => m.shopId === activeShopId && m.type === "SALE" && m.date >= Date.now() - 86400000), [movements, activeShopId]);
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      setSalesCutoffTs(Date.now() - DAY_MS);
+    }, SALES_CUTOFF_REFRESH_MS);
+
+    return () => window.clearInterval(timer);
+  }, []);
+
+  const todaySales = useMemo(() => (movements || []).filter((m) => m.shopId === activeShopId && m.type === "SALE" && m.date >= salesCutoffTs), [movements, activeShopId, salesCutoffTs]);
   const todayRev = useMemo(() => todaySales.reduce((s, m) => s + m.total, 0), [todaySales]);
   const stockSt = (p) => { if (p.stock <= 0) return "out"; if (p.stock < p.minStock) return "low"; return "ok"; };
   const lowStockProducts = useMemo(() => (products || []).filter((p) => p.shopId === activeShopId && stockSt(p) !== "ok"), [products, activeShopId]);
@@ -118,7 +247,11 @@ function ERPShell({ children }) {
   });
   const dismissLowStock = () => {
     setLowStockDismissed(true);
-    try { sessionStorage.setItem("vl_low_stock_dismissed", "1"); } catch {}
+    try {
+      sessionStorage.setItem("vl_low_stock_dismissed", "1");
+    } catch (err) {
+      console.warn("[UI] Could not persist low stock banner state:", err?.message || err);
+    }
   };
 
   return (
@@ -151,6 +284,7 @@ function ERPShell({ children }) {
           )}
         </div>
         <div style={{ flex: 1 }} />
+        <SyncStatusPill status={syncStatus} onSyncNow={syncNow} onOpenCenter={openSyncCenter} />
         {todayRev > 0 && (<div className="topbar-secondary" style={{ background: T.emeraldBg, border: `1px solid ${T.emerald}33`, borderRadius: 8, padding: "5px 12px", fontSize: 12, color: T.emerald, fontWeight: 700, fontFamily: FONT.mono, display: "flex", alignItems: "center", gap: 6 }}>📈 {fmt(todayRev)}</div>)}
         {lowCount > 0 && (<button onClick={() => navigate("/inventory")} style={{ background: T.crimsonBg, border: `1px solid ${T.crimson}33`, borderRadius: 8, padding: "5px 12px", fontSize: 12, color: T.crimson, fontWeight: 700, cursor: "pointer", fontFamily: FONT.ui, display: "flex", alignItems: "center", gap: 5 }}>⚠ {lowCount}</button>)}
         <Btn size="sm" variant="ghost" onClick={() => navigate("/billing")} style={{ borderColor: T.border }}>🧾</Btn>
@@ -193,6 +327,17 @@ function ERPShell({ children }) {
       <ProductModal open={pModal.open} product={pModal.product} products={products} activeShopId={activeShopId} onClose={() => setPModal({ open: false, product: null })} onSave={saveProduct} toast={toast} />
       {/* Add new products — cart/bucket procurement flow */}
       <BulkStockInModal open={catalogModal} onClose={() => setCatalogModal(false)} onSave={handleBulkStockIn} toast={toast} activeShopId={activeShopId} />
+      <SyncCenterModal
+        open={syncCenterOpen}
+        onClose={() => setSyncCenterOpen(false)}
+        status={syncStatus}
+        items={syncQueueItems}
+        onSyncNow={syncNow}
+        onRetryItem={handleRetrySyncItem}
+        onDiscardItem={handleDiscardSyncItem}
+        actionBusy={syncActionBusy}
+        itemBusy={syncItemBusy}
+      />
       <Toast items={toasts} onRemove={removeToast} />
 
       {/* LEFT SIDEBAR / BOTTOM NAV */}
@@ -293,7 +438,9 @@ function AppContent() {
         if (rt) setTokens(null, rt);
         return user;
       }
-    } catch {}
+    } catch (err) {
+      console.warn("[Auth] Could not hydrate local user session:", err?.message || err);
+    }
     return null;
   });
 
@@ -303,6 +450,7 @@ function AppContent() {
     saveProducts, saveMovements,
     receipts, saveReceipts,
     loaded, activeShopId, setActiveShopId, logAudit, clearStore,
+    syncFromAPI: syncStoreFromAPI,
   } = useStore();
 
   // ── UI state ──
@@ -310,7 +458,138 @@ function AppContent() {
   const [catalogModal, setCatalogModal] = useState(false);
   const [shortcutOverlay, setShortcutOverlay] = useState(false);
   const [cmdPaletteOpen, setCmdPaletteOpen] = useState(false);
+  const [isLoggingOut, setIsLoggingOut] = useState(false);
+  const [syncCenterOpen, setSyncCenterOpen] = useState(false);
+  const [syncActionBusy, setSyncActionBusy] = useState(false);
+  const [syncItemBusy, setSyncItemBusy] = useState({});
+  const [syncStatus, setSyncStatus] = useState(() => getSyncStatus());
+  const [syncQueueItems, setSyncQueueItems] = useState(() => getSyncQueueSnapshot().items || []);
+  const lastDbRefreshTsRef = useRef(0);
   const { items: toasts, add: toast, remove: removeToast } = useToast();
+
+  const refreshSyncCenterState = useCallback(() => {
+    const snapshot = getSyncQueueSnapshot();
+    setSyncStatus(snapshot.status);
+    setSyncQueueItems(snapshot.items);
+    return snapshot;
+  }, []);
+
+  useEffect(() => {
+    const unsubscribe = subscribeSyncStatus((next) => {
+      setSyncStatus(next);
+      const snapshot = getSyncQueueSnapshot();
+      setSyncQueueItems(snapshot.items);
+    });
+    return () => unsubscribe();
+  }, []);
+
+  useEffect(() => {
+    if (currentUser?.userId) {
+      setSyncScope({ userId: currentUser.userId, shopId: currentUser.shopId || activeShopId || null });
+    } else {
+      setSyncScope(null);
+    }
+    refreshSyncCenterState();
+  }, [currentUser?.userId, currentUser?.shopId, activeShopId, refreshSyncCenterState]);
+
+  useEffect(() => {
+    if (!currentUser) return;
+    flushSyncQueue({ reason: "session-ready", timeoutMs: 5000 }).catch((err) => {
+      console.warn("[Sync] Session startup flush failed:", err?.message || err);
+    });
+  }, [currentUser]);
+
+  useEffect(() => {
+    if (!currentUser?.userId) return;
+    syncStoreFromAPI().catch((err) => {
+      console.warn("[Store] Session DB sync failed:", err?.message || err);
+    });
+  }, [currentUser?.userId, currentUser?.shopId, syncStoreFromAPI]);
+
+  useEffect(() => {
+    if (!currentUser?.userId) return;
+    if (syncStatus.isSyncing || syncStatus.pendingCount > 0) return;
+
+    const now = Date.now();
+    if (now - lastDbRefreshTsRef.current < 2500) return;
+    lastDbRefreshTsRef.current = now;
+
+    syncStoreFromAPI().catch((err) => {
+      console.warn("[Store] Post-sync DB refresh failed:", err?.message || err);
+    });
+  }, [currentUser?.userId, syncStatus.isSyncing, syncStatus.pendingCount, syncStoreFromAPI]);
+
+  useEffect(() => {
+    const handleBeforeUnload = (e) => {
+      if (!syncStatus.pendingCount) return undefined;
+      e.preventDefault();
+      e.returnValue = "";
+      return "";
+    };
+
+    window.addEventListener("beforeunload", handleBeforeUnload);
+    return () => window.removeEventListener("beforeunload", handleBeforeUnload);
+  }, [syncStatus.pendingCount]);
+
+  const syncNow = useCallback(async () => {
+    setSyncActionBusy(true);
+    try {
+      const result = await flushSyncQueue({ reason: "manual", timeoutMs: 12000 });
+      refreshSyncCenterState();
+      if (result.synced) {
+        toast("All local changes synced to backend.", "success", "Sync Complete");
+      } else {
+        toast(`${result.pendingCount} change(s) still pending sync.`, "warn", "Sync Pending");
+      }
+      return result;
+    } finally {
+      setSyncActionBusy(false);
+    }
+  }, [toast, refreshSyncCenterState]);
+
+  const openSyncCenter = useCallback(() => {
+    refreshSyncCenterState();
+    setSyncCenterOpen(true);
+  }, [refreshSyncCenterState]);
+
+  const handleRetrySyncItem = useCallback(async (itemId) => {
+    if (!itemId) return;
+    setSyncItemBusy((prev) => ({ ...prev, [itemId]: true }));
+    try {
+      const result = await retrySyncQueueItem(itemId, { timeoutMs: 12000 });
+      const snapshot = result.snapshot || refreshSyncCenterState();
+      setSyncStatus(snapshot.status);
+      setSyncQueueItems(snapshot.items);
+      if (result.synced) {
+        toast("Queue item synced successfully.", "success", "Retry Success");
+      } else {
+        toast("Retry attempted. Some items are still pending.", "warn", "Retry Done");
+      }
+    } catch (err) {
+      toast(err?.message || "Failed to retry sync item.", "error", "Retry Failed");
+    } finally {
+      setSyncItemBusy((prev) => {
+        const next = { ...prev };
+        delete next[itemId];
+        return next;
+      });
+    }
+  }, [toast, refreshSyncCenterState]);
+
+  const handleDiscardSyncItem = useCallback((itemId) => {
+    if (!itemId) return;
+    const ok = confirm("Discard this pending sync item? This keeps local data but skips backend write for this item.");
+    if (!ok) return;
+
+    const result = discardSyncQueueItem(itemId);
+    if (result?.snapshot) {
+      setSyncStatus(result.snapshot.status);
+      setSyncQueueItems(result.snapshot.items);
+    } else {
+      refreshSyncCenterState();
+    }
+    toast("Pending sync item discarded.", "warn", "Item Discarded");
+  }, [toast, refreshSyncCenterState]);
 
   // ── Keyboard shortcut system ──
   useEffect(() => {
@@ -351,7 +630,11 @@ function AppContent() {
   // ── Auth handlers ──
   const handleLogin = useCallback((user) => {
     let lastUserId = null;
-    try { lastUserId = localStorage.getItem("as_last_user_id"); } catch {}
+    try {
+      lastUserId = localStorage.getItem("as_last_user_id");
+    } catch (err) {
+      console.warn("[Auth] Could not read last user id:", err?.message || err);
+    }
 
     if (lastUserId && user?.userId && lastUserId !== user.userId) {
       clearStore();
@@ -362,33 +645,71 @@ function AppContent() {
     // use the correct UUID (not the hardcoded "s1" seed default).
     if (user?.shopId) {
       setActiveShopId(user.shopId);
-      try { localStorage.setItem("vl_shopId", user.shopId); } catch {}
-      try { localStorage.setItem("as_user", JSON.stringify(user)); } catch {}
+      try {
+        localStorage.setItem("vl_shopId", user.shopId);
+      } catch (err) {
+        console.warn("[Auth] Could not persist shop id:", err?.message || err);
+      }
+      try {
+        localStorage.setItem("as_user", JSON.stringify(user));
+      } catch (err) {
+        console.warn("[Auth] Could not persist user payload:", err?.message || err);
+      }
     }
     if (user?.userId) {
-      try { localStorage.setItem("as_last_user_id", user.userId); } catch {}
+      try {
+        localStorage.setItem("as_last_user_id", user.userId);
+      } catch (err) {
+        console.warn("[Auth] Could not persist last user id:", err?.message || err);
+      }
     }
+    syncStoreFromAPI().catch((err) => {
+      console.warn("[Store] Post-login DB sync failed:", err?.message || err);
+    });
     navigate("/dashboard", { replace: true });
-  }, [navigate, setActiveShopId, clearStore]);
+  }, [navigate, setActiveShopId, clearStore, syncStoreFromAPI]);
 
-  const handleLogout = useCallback(() => {
-    // Revoke the refresh token in the backend (fire-and-forget)
-    const rt = localStorage.getItem("as_refresh_token");
-    api.post("/api/auth/logout", { refreshToken: rt }).catch(() => {});
-    
-    // Clear auth/session only. Keep vl_* app data so inventory/POS history
-    // remains available after the same user logs back in.
-    clearTokens();
+  const handleLogout = useCallback(async ({ logoutAll = false } = {}) => {
+    if (isLoggingOut) return false;
 
-    if (currentUser?.userId) {
-      try { localStorage.setItem("as_last_user_id", currentUser.userId); } catch {}
+    const pendingCount = getSyncStatus().pendingCount;
+    if (pendingCount > 0) {
+      toast(`Syncing ${pendingCount} pending change(s) before logout...`, "info", "Sync Required");
+      const result = await flushSyncQueue({ reason: "logout", timeoutMs: 18000 });
+      if (!result.synced) {
+        const forceLogout = confirm(
+          `${result.pendingCount} sync item(s) are still pending. Log out anyway?\n\n` +
+          "Pending sync data will stay on this device for this account and retry next time you sign in."
+        );
+        if (!forceLogout) {
+          toast("Logout cancelled. Resolve pending sync items first.", "warn", "Logout Cancelled");
+          return false;
+        }
+        toast("Logging out with pending sync. Queue will retry on next sign-in.", "warn", "Sync Deferred");
+      }
     }
-    
-    localStorage.removeItem("as_user");
-    localStorage.removeItem("as_refresh_token");
-    setCurrentUser(null);
-    navigate("/login", { replace: true });
-  }, [navigate, currentUser]);
+
+    setIsLoggingOut(true);
+    try {
+      const rt = localStorage.getItem("as_refresh_token");
+      if (logoutAll) {
+        await api.post("/api/auth/logout-all", {});
+      } else {
+        await api.post("/api/auth/logout", { refreshToken: rt });
+      }
+    } catch {
+      // Proceed with local logout even if revoke endpoint is unavailable.
+    } finally {
+      clearTokens();
+      localStorage.removeItem("as_user");
+      localStorage.removeItem("as_refresh_token");
+      setCurrentUser(null);
+      setIsLoggingOut(false);
+      navigate("/login", { replace: true });
+    }
+
+    return true;
+  }, [navigate, isLoggingOut, toast]);
 
   // ── Business handlers ──
   const saveProduct = useCallback((p) => {
@@ -403,6 +724,11 @@ function AppContent() {
     }
     const exists = products.find((x) => x.id === p.id);
     saveProducts(exists ? products.map((x) => (x.id === p.id ? p : x)) : [...products, p]);
+    if (exists) {
+      syncProductSave(p).catch((err) => {
+        console.warn("[Sync] Product update queueing failed:", err?.message || err);
+      });
+    }
     logAudit(exists ? "PRODUCT_UPDATED" : "PRODUCT_CREATED", "product", p.id, `${p.name} (${p.sku})`);
     return true;
   }, [products, saveProducts, logAudit, toast]);
@@ -686,8 +1012,24 @@ function AppContent() {
     catalogModal, setCatalogModal,
     toast, toasts, removeToast,
     currentUser, handleLogout,
+    syncStatus, syncNow,
+    openSyncCenter,
+    syncCenterOpen, setSyncCenterOpen,
+    syncQueueItems, syncActionBusy, syncItemBusy,
+    handleRetrySyncItem, handleDiscardSyncItem,
     saveProduct, handleBulkStockIn,
-  }), [pModal, setPModal, catalogModal, setCatalogModal, toast, toasts, removeToast, currentUser, handleLogout, saveProduct, handleBulkStockIn]);
+  }), [
+    pModal, setPModal,
+    catalogModal, setCatalogModal,
+    toast, toasts, removeToast,
+    currentUser, handleLogout,
+    syncStatus, syncNow,
+    openSyncCenter,
+    syncCenterOpen, setSyncCenterOpen,
+    syncQueueItems, syncActionBusy, syncItemBusy,
+    handleRetrySyncItem, handleDiscardSyncItem,
+    saveProduct, handleBulkStockIn,
+  ]);
 
   // ── Loading state — skeletal screen, no spinner ──
   if (!loaded) {

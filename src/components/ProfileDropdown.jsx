@@ -1,8 +1,7 @@
 import { useState, useEffect, useRef } from "react";
-import { useNavigate, useLocation } from "react-router-dom";
+import { useNavigate } from "react-router-dom";
 import { Avatar } from "./Avatar";
 import { T, FONT } from "../theme";
-import { clearTokens, api } from "../api/client.js";
 
 const ROLE_LABELS = {
   SHOP_OWNER: { label: "Shop Owner", color: "#D97706", bg: "#D9770622" },
@@ -53,7 +52,6 @@ export function ProfileDropdown({ user, onLogout }) {
   const [loggingOut, setLoggingOut] = useState(false);
   const dropdownRef = useRef(null);
   const navigate = useNavigate();
-  const location = useLocation();
 
   // Close on click outside
   useEffect(() => {
@@ -76,31 +74,14 @@ export function ProfileDropdown({ user, onLogout }) {
     return () => document.removeEventListener("keydown", handleEscape);
   }, []);
 
-  // Close on route change
-  useEffect(() => { setOpen(false); }, [location.pathname]);
-
   const handleLogout = async () => {
     if (loggingOut) return;
     setLoggingOut(true);
     setOpen(false);
 
-    try {
-      // Call backend to revoke refresh token + clear cookie
-      await api.post("/api/auth/logout", {});
-    } catch {
-      // Even if server call fails, proceed with client-side logout
-      // The token will expire naturally
-    }
-
-    // Clear all client state
-    clearTokens();
-    localStorage.removeItem("as_user");
-
-    // Notify parent (App.jsx clears React state)
-    if (onLogout) onLogout();
-
-    // Navigate with replace so back button doesn't show stale data
-    navigate("/login", { replace: true });
+    // Parent handles guarded logout (sync flush + state cleanup + redirect).
+    const ok = onLogout ? await onLogout() : true;
+    if (ok === false) setOpen(true);
     setLoggingOut(false);
   };
 

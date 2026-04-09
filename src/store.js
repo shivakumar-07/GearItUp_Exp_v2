@@ -1,8 +1,92 @@
 import { useState, useEffect, useCallback, createContext, useContext } from "react";
 import { SEED_PRODUCTS, SEED_SHOPS, genSeededMovements, SEED_ORDERS, SEED_PURCHASES, SEED_PARTIES, SEED_VEHICLES, SEED_JOB_CARDS, uid } from "./utils";
-import { fetchInventory, fetchParties, syncProductSave } from "./api/sync.js";
+import { fetchInventory, fetchParties, fetchMovements } from "./api/sync.js";
 
 export const StoreContext = createContext(null);
+
+function isDbUuid(id) {
+    return typeof id === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id);
+}
+
+function stockDeltaForMovement(movement) {
+    const type = String(movement?.type || '').toUpperCase();
+    const qty = Number(movement?.qty || 0);
+    if (['PURCHASE', 'OPENING', 'RETURN_IN'].includes(type)) return qty;
+    if (['SALE', 'RETURN_OUT', 'DAMAGE', 'THEFT'].includes(type)) return -Math.abs(qty);
+    if (['ADJUSTMENT', 'AUDIT'].includes(type)) return qty;
+    return 0;
+}
+
+function recoverProductsFromPendingMovements(products = [], movements = [], fallbackShopId = 's1') {
+    const existing = Array.isArray(products) ? products : [];
+    const rows = Array.isArray(movements) ? movements : [];
+    const knownKeys = new Set(existing.map((p) => p?.inventoryId || p?.id).filter(Boolean));
+
+    const bucket = new Map();
+    for (const m of rows) {
+        if (!m?._pendingSync) continue;
+        const key = m?.productId || m?.inventoryId;
+        if (!key || isDbUuid(key) || knownKeys.has(key)) continue;
+
+        if (!bucket.has(key)) {
+            bucket.set(key, {
+                id: key,
+                inventoryId: key,
+                name: m?.productName || 'Recovered Local Item',
+                buyPrice: Number(m?.unitPrice || 0) || 0,
+                sellPrice: Number(m?.sellingPrice || m?.unitPrice || 0) || 0,
+                stock: 0,
+                minStock: 5,
+                category: 'General',
+                image: '📦',
+                rack: '',
+                location: '',
+                shopId: m?.shopId || fallbackShopId,
+                _pendingSync: true,
+                _recoveredFromMovements: true,
+            });
+        }
+
+        const target = bucket.get(key);
+        target.stock += stockDeltaForMovement(m);
+        if (m?.productName) target.name = m.productName;
+        if (Number(m?.unitPrice) > 0) target.buyPrice = Number(m.unitPrice);
+        if (Number(m?.sellingPrice) > 0) target.sellPrice = Number(m.sellingPrice);
+        if (m?.shopId) target.shopId = m.shopId;
+    }
+
+    if (bucket.size === 0) return existing;
+
+    const recovered = [...bucket.values()].map((item) => ({
+        ...item,
+        stock: Math.max(0, Number(item.stock || 0)),
+    }));
+    return [...existing, ...recovered];
+}
+
+function mergeApiWithLocalProducts(localProducts = [], apiProducts = [], realShopId = null) {
+    const apiList = Array.isArray(apiProducts) ? apiProducts : [];
+    const localList = Array.isArray(localProducts) ? localProducts : [];
+    const apiKeys = new Set(apiList.map(p => p?.inventoryId || p?.id).filter(Boolean));
+
+    const preservedLocalOnly = localList
+        .filter((p) => {
+            const key = p?.inventoryId || p?.id;
+            if (!key) return false;
+            // Keep only true local/offline rows that backend cannot return yet.
+            if (!isDbUuid(key)) return !apiKeys.has(key);
+            return false;
+        })
+        .map((p) => {
+            // Recover old local rows created before shop UUID hydration.
+            if (realShopId && p?.shopId === "s1") {
+                return { ...p, shopId: realShopId };
+            }
+            return p;
+        });
+
+    return [...apiList, ...preservedLocalOnly];
+}
 
 export function useStoreProvider() {
     const [shops, setShops] = useState(null);
@@ -39,14 +123,20 @@ export function useStoreProvider() {
         try { localStorage.setItem("vl_shopId", shopId); } catch {}
     }, [activeShopId]);
 
-    const syncFromAPI = async () => {
+    const syncFromAPI = async (localProductsSnapshot = null, localMovementsSnapshot = null) => {
         try {
-            const { getAccessToken } = await import('./api/client.js');
-            if (!getAccessToken()) return; // Not logged in, skip
+            let hasSessionHint = false;
+            try {
+                hasSessionHint = Boolean(localStorage.getItem("as_user") || localStorage.getItem("as_refresh_token"));
+            } catch {
+                hasSessionHint = false;
+            }
+            if (!hasSessionHint) return; // Not logged in yet, skip silently.
 
-            const [apiProducts, apiParties] = await Promise.all([
+            const [apiProducts, apiParties, apiMovements] = await Promise.all([
                 fetchInventory(),
                 fetchParties(),
+                fetchMovements(),
             ]);
 
             if (apiProducts && apiProducts.length > 0) {
@@ -59,15 +149,55 @@ export function useStoreProvider() {
                     setActiveShopId(realShopId);
                     try { localStorage.setItem("vl_shopId", realShopId); } catch {}
                 }
-                setP(apiProducts);
-                try { localStorage.setItem("vl_products", JSON.stringify(apiProducts)); } catch {}
-                console.log(`[Store] Synced ${apiProducts.length} products from API (shopId: ${realShopId})`);
+
+                const localProducts = Array.isArray(localProductsSnapshot)
+                    ? localProductsSnapshot
+                    : (() => {
+                        try {
+                            const raw = localStorage.getItem("vl_products");
+                            return raw ? JSON.parse(raw) : [];
+                        } catch {
+                            return [];
+                        }
+                    })();
+                const mergedProducts = mergeApiWithLocalProducts(localProducts, apiProducts, realShopId);
+                const localMovements = Array.isArray(localMovementsSnapshot)
+                    ? localMovementsSnapshot
+                    : (() => {
+                        try {
+                            const raw = localStorage.getItem("vl_movements");
+                            return raw ? JSON.parse(raw) : [];
+                        } catch {
+                            return [];
+                        }
+                    })();
+                const recoveredProducts = recoverProductsFromPendingMovements(
+                    mergedProducts,
+                    localMovements,
+                    realShopId || activeShopId
+                );
+
+                setP(recoveredProducts);
+                try { localStorage.setItem("vl_products", JSON.stringify(recoveredProducts)); } catch {}
+
+                const preservedCount = Math.max(0, recoveredProducts.length - apiProducts.length);
+                if (preservedCount > 0) {
+                    console.log(`[Store] Synced ${apiProducts.length} API products and preserved ${preservedCount} local-only product(s).`);
+                } else {
+                    console.log(`[Store] Synced ${apiProducts.length} products from API (shopId: ${realShopId})`);
+                }
             }
 
             if (apiParties && apiParties.length > 0) {
                 setParties(apiParties);
                 try { localStorage.setItem("vl_parties", JSON.stringify(apiParties)); } catch {}
                 console.log(`[Store] Synced ${apiParties.length} parties from API`);
+            }
+
+            if (apiMovements !== null) {
+                setM(apiMovements);
+                try { localStorage.setItem("vl_movements", JSON.stringify(apiMovements)); } catch {}
+                console.log(`[Store] Synced ${apiMovements.length} movement entries from API ledger`);
             }
 
             setApiSynced(true);
@@ -93,16 +223,33 @@ export function useStoreProvider() {
                 const storedVehicles   = localStorage.getItem("vl_vehicles");
                 const storedJobCards   = localStorage.getItem("vl_jobCards");
 
-                setShops(storedShops       ? JSON.parse(storedShops)      : []);
-                setP(storedProducts        ? JSON.parse(storedProducts)    : []);
-                setM(storedMovements       ? JSON.parse(storedMovements)   : []);
-                setOrders(storedOrders     ? JSON.parse(storedOrders)      : []);
-                setPurchases(storedPurchases ? JSON.parse(storedPurchases) : []);
-                setAuditLog(storedAuditLog ? JSON.parse(storedAuditLog)    : []);
-                setReceipts(storedReceipts ? JSON.parse(storedReceipts)    : []);
-                setParties(storedParties   ? JSON.parse(storedParties)     : []);
-                setVehicles(storedVehicles ? JSON.parse(storedVehicles)    : []);
-                setJobCards(storedJobCards ? JSON.parse(storedJobCards)    : []);
+                const parsedShops = storedShops ? JSON.parse(storedShops) : [];
+                const parsedProducts = storedProducts ? JSON.parse(storedProducts) : [];
+                const parsedMovements = storedMovements ? JSON.parse(storedMovements) : [];
+                const parsedOrders = storedOrders ? JSON.parse(storedOrders) : [];
+                const parsedPurchases = storedPurchases ? JSON.parse(storedPurchases) : [];
+                const parsedAuditLog = storedAuditLog ? JSON.parse(storedAuditLog) : [];
+                const parsedReceipts = storedReceipts ? JSON.parse(storedReceipts) : [];
+                const parsedParties = storedParties ? JSON.parse(storedParties) : [];
+                const parsedVehicles = storedVehicles ? JSON.parse(storedVehicles) : [];
+                const parsedJobCards = storedJobCards ? JSON.parse(storedJobCards) : [];
+
+                const hydratedProducts = recoverProductsFromPendingMovements(parsedProducts, parsedMovements, activeShopId);
+
+                setShops(parsedShops);
+                setP(hydratedProducts);
+                setM(parsedMovements);
+                setOrders(parsedOrders);
+                setPurchases(parsedPurchases);
+                setAuditLog(parsedAuditLog);
+                setReceipts(parsedReceipts);
+                setParties(parsedParties);
+                setVehicles(parsedVehicles);
+                setJobCards(parsedJobCards);
+
+                if (hydratedProducts.length !== parsedProducts.length) {
+                    try { localStorage.setItem("vl_products", JSON.stringify(hydratedProducts)); } catch {}
+                }
 
                 if (storedVehicle) setSelectedVehicle(JSON.parse(storedVehicle));
                 if (storedCart) setCart(JSON.parse(storedCart));
@@ -114,23 +261,27 @@ export function useStoreProvider() {
             setL(true);
 
             // Background API sync (non-blocking — updates shop data from DB)
-            syncFromAPI().catch(err => console.warn('[Store] API sync failed:', err));
+            let localProductsSnapshot = [];
+            let localMovementsSnapshot = [];
+            try {
+                const rawProducts = localStorage.getItem("vl_products");
+                localProductsSnapshot = rawProducts ? JSON.parse(rawProducts) : [];
+            } catch {}
+            try {
+                const rawMovements = localStorage.getItem("vl_movements");
+                localMovementsSnapshot = rawMovements ? JSON.parse(rawMovements) : [];
+            } catch {}
+
+            syncFromAPI(localProductsSnapshot, localMovementsSnapshot).catch(err => console.warn('[Store] API sync failed:', err));
         })();
     }, []);
 
     // Persistence helpers
     const saveShops = useCallback(d => { setShops(d); try { localStorage.setItem("vl_shops", JSON.stringify(d)); } catch { } }, []);
     const saveProducts = useCallback(d => {
-        // Functional setState so we don't create a closure dependency on `products`
-        setP(prev => {
-            if (d.length === prev?.length) {
-                const changed = d.find((p, i) => p !== prev?.[i]);
-                if (changed) syncProductSave(changed).catch(() => {});
-            }
-            return d;
-        });
+        setP(d);
         try { localStorage.setItem("vl_products", JSON.stringify(d)); } catch { }
-    }, []); // stable — no dependency on products
+    }, []);
     const saveMovements  = useCallback(d => { setM(d);         try { localStorage.setItem("vl_movements",  JSON.stringify(d)); } catch { } }, []);
     const saveOrders     = useCallback(d => { setOrders(d);    try { localStorage.setItem("vl_orders",     JSON.stringify(d)); } catch { } }, []);
     const savePurchases  = useCallback(d => { setPurchases(d); try { localStorage.setItem("vl_purchases",  JSON.stringify(d)); } catch { } }, []);
@@ -200,7 +351,7 @@ export function useStoreProvider() {
         appMode, saveAppMode,
         activeShopId, setActiveShopId, persistShopId,
         marketplacePage, setMarketplacePage,
-        logAudit, resetAll, clearStore, loaded, apiSynced
+        logAudit, resetAll, clearStore, loaded, apiSynced, syncFromAPI
     };
 }
 
