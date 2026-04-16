@@ -6,12 +6,10 @@ export function CommandPalette({ open, onClose, onNavigate }) {
   const [query, setQuery] = useState("");
   const inputRef = useRef(null);
   const [selIdx, setSelIdx] = useState(0);
-  const { products, parties, movements } = useStore();
+  const { products } = useStore();
 
   useEffect(() => {
     if (open) {
-      setQuery("");
-      setSelIdx(0);
       setTimeout(() => inputRef.current?.focus(), 80);
     }
   }, [open]);
@@ -33,11 +31,7 @@ export function CommandPalette({ open, onClose, onNavigate }) {
       { label: "Dashboard", path: "/dashboard", icon: "◈" },
       { label: "Inventory", path: "/inventory", icon: "⬡" },
       { label: "POS Billing", path: "/billing", icon: "🧾" },
-      { label: "History", path: "/history", icon: "⊞" },
-      { label: "Parties", path: "/parties", icon: "👥" },
-      { label: "Workshop", path: "/workshop", icon: "🔧" },
       { label: "Reports", path: "/reports", icon: "📊" },
-      { label: "Orders", path: "/orders", icon: "◎" },
     ];
     pages.forEach(p => {
       if (p.label.toLowerCase().includes(q)) {
@@ -58,23 +52,8 @@ export function CommandPalette({ open, onClose, onNavigate }) {
       });
     }
 
-    // Parties
-    if (parties) {
-      parties.filter(p =>
-        (p.name || "").toLowerCase().includes(q) || (p.phone || "").includes(q)
-      ).slice(0, 4).forEach(p => {
-        out.push({
-          type: "Party", label: p.name, sub: `${p.type} · ${p.phone || "No phone"}`,
-          icon: "👤",
-          action: () => { onNavigate("/parties"); onClose(); },
-        });
-      });
-    }
-
     return out.slice(0, 12);
-  }, [query, products, parties, onNavigate, onClose]);
-
-  useEffect(() => { setSelIdx(0); }, [query]);
+  }, [query, products, onNavigate, onClose]);
 
   const handleKey = (e) => {
     if (e.key === "ArrowDown") { e.preventDefault(); setSelIdx(i => Math.min(i + 1, results.length - 1)); }
@@ -100,9 +79,12 @@ export function CommandPalette({ open, onClose, onNavigate }) {
             <input
               ref={inputRef}
               value={query}
-              onChange={e => setQuery(e.target.value)}
+              onChange={e => {
+                setQuery(e.target.value);
+                setSelIdx(0);
+              }}
               onKeyDown={handleKey}
-              placeholder="Search products, parties, pages…"
+              placeholder="Search products and MVP pages..."
               style={{
                 flex: 1, background: "transparent", border: "none", outline: "none",
                 color: T.t1, fontSize: 15, fontFamily: FONT.ui, fontWeight: 500,
@@ -124,7 +106,7 @@ export function CommandPalette({ open, onClose, onNavigate }) {
             )}
             {results.length === 0 && !query.trim() && (
               <div style={{ padding: "20px 18px", textAlign: "center" }}>
-                <div style={{ fontSize: 13, color: T.t3 }}>Type to search products, parties, or navigate pages</div>
+                <div style={{ fontSize: 13, color: T.t3 }}>Type to search products or navigate MVP pages</div>
               </div>
             )}
             {results.map((r, i) => (

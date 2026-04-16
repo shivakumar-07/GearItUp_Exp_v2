@@ -4,6 +4,46 @@ import { fmt, fmtDateTime, uid, generateInvoiceNumber, margin } from "../utils";
 import { Modal, Field, Input, Select, Divider, Btn } from "../components/ui";
 import { BarcodeScanner } from "../components/BarcodeScanner.jsx";
 
+function isHttpImage(value) {
+    return typeof value === "string" && /^https?:\/\//i.test(value.trim());
+}
+
+function ProductThumb({ image, alt, size = 20, fallback = "📦" }) {
+    const [broken, setBroken] = useState(false);
+    const raw = typeof image === "string" ? image.trim() : "";
+
+    useEffect(() => {
+        setBroken(false);
+    }, [raw]);
+
+    if (!raw || broken) {
+        return <span style={{ fontSize: size, lineHeight: 1 }}>{fallback}</span>;
+    }
+
+    if (!isHttpImage(raw)) {
+        return <span style={{ fontSize: size, lineHeight: 1 }}>{raw}</span>;
+    }
+
+    return (
+        <img
+            src={raw}
+            alt={alt || "product"}
+            loading="lazy"
+            onError={() => setBroken(true)}
+            style={{
+                width: size,
+                height: size,
+                borderRadius: 4,
+                objectFit: "cover",
+                background: T.surface,
+                border: `1px solid ${T.border}`,
+                display: "inline-block",
+                verticalAlign: "middle",
+            }}
+        />
+    );
+}
+
 /**
  * POSBillingPage — Multi-item Point of Sale billing for quick counter sales.
  * Supports:
@@ -257,7 +297,10 @@ export function POSBillingPage({ products, activeShopId, onMultiSale, toast }) {
                 <div style={{ borderTop: `1px dashed ${T.border}`, paddingTop: 10, marginTop: 6 }}>
                     {items.map((item, idx) => (
                         <div key={idx} style={{ marginBottom: 8, padding: "6px 10px", background: T.card, borderRadius: 8 }}>
-                            <div style={{ fontSize: 13, fontWeight: 600, color: T.t1, marginBottom: 2 }}>{item.image} {item.name}</div>
+                            <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, fontWeight: 600, color: T.t1, marginBottom: 2 }}>
+                                <ProductThumb image={item.image} alt={item.name} size={18} fallback="🔧" />
+                                <span>{item.name || "Unnamed product"}</span>
+                            </div>
                             <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, color: T.t3 }}>
                                 <span>{item.qty} × {fmt(item.price)}</span>
                                 <span style={{ color: T.t1, fontWeight: 700, fontFamily: FONT.mono }}>{fmt(lineCalcs[idx].afterDisc)}</span>
@@ -383,7 +426,7 @@ export function POSBillingPage({ products, activeShopId, onMultiSale, toast }) {
                                 width: "100%", padding: "12px 16px", background: "transparent", border: "none", borderBottom: `1px solid ${T.border}`,
                                 color: T.t1, cursor: "pointer", textAlign: "left", fontFamily: FONT.ui, display: "flex", alignItems: "center", gap: 12, transition: "background 0.1s",
                             }} className="row-hover">
-                                <span style={{ fontSize: 22 }}>{p.image}</span>
+                                <ProductThumb image={p.image} alt={p.name} size={22} fallback="🔧" />
                                 <div style={{ flex: 1 }}>
                                     <div style={{ fontWeight: 700, fontSize: 14 }}>{p.name}</div>
                                     <div style={{ fontSize: 11, color: T.t3, fontFamily: FONT.mono, marginTop: 2 }}>{p.sku} · {p.brand} · Stock: {p.stock}</div>
@@ -426,7 +469,7 @@ export function POSBillingPage({ products, activeShopId, onMultiSale, toast }) {
                                         <td style={{ padding: "10px 12px", color: T.t4, fontFamily: FONT.mono, fontSize: 12, fontWeight: 700 }}>{idx + 1}</td>
                                         <td style={{ padding: "10px 12px" }}>
                                             <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                                                <span style={{ fontSize: 18 }}>{item.image}</span>
+                                                <ProductThumb image={item.image} alt={item.name} size={18} fallback="🔧" />
                                                 <div>
                                                     <div style={{ fontWeight: 700, color: T.t1, fontSize: 13, maxWidth: 200, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{item.name}</div>
                                                     <div style={{ fontSize: 10, color: T.t3, fontFamily: FONT.mono, marginTop: 1 }}>{item.sku} · Stock: {item.maxStock}</div>

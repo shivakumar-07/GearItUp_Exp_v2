@@ -12,7 +12,7 @@
   border-radius: 4px;
 }
 
-/* Text selection styling — brand amber */
+/* Text selection styling — redpiston amber accent */
 ::selection {
   background: rgba(245, 158, 11, 0.3);
   color: #F0F4F8;

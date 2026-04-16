@@ -5,7 +5,7 @@ export const T = {
   cardHover: "#23314F",
   border: "#2A3B59",
   borderHi: "#3B5075",
-  // Amber — primary brand
+  // Amber — primary ERP accent
   amber: "#F59E0B",
   amberDim: "#92400E",
   amberGlow: "rgba(245,158,11,0.12)",

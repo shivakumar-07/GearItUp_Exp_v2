@@ -6,12 +6,70 @@ import { sendInvoiceWhatsApp } from '../services/whatsapp.js';
 
 const router = Router();
 
+const MAX_INVOICE_NUMBER_RETRIES = 5;
+const SUPPORTED_PAYMENT_MODES = new Set(['CASH', 'UPI', 'CREDIT', 'SPLIT']);
+
+function toPositiveNumber(value) {
+  const num = Number(value);
+  return Number.isFinite(num) && num > 0 ? num : 0;
+}
+
+function toNullableAmount(value) {
+  return value > 0 ? value : null;
+}
+
+function normalizeInvoicePayment({ paymentMode, cashAmount, upiAmount, creditAmount, totalAmount }) {
+  const mode = String(paymentMode || '').trim().toUpperCase();
+  const modeAlias = {
+    UDHAAR: 'CREDIT',
+    CARD: 'UPI',
+  };
+
+  let normalizedMode = modeAlias[mode] || mode || 'CASH';
+  if (!SUPPORTED_PAYMENT_MODES.has(normalizedMode)) normalizedMode = 'CASH';
+
+  let normalizedCash = toPositiveNumber(cashAmount);
+  let normalizedUpi = toPositiveNumber(upiAmount);
+  let normalizedCredit = toPositiveNumber(creditAmount);
+  const normalizedTotal = toPositiveNumber(totalAmount);
+  const activeTenderCount = [normalizedCash, normalizedUpi, normalizedCredit].filter((amount) => amount > 0).length;
+
+  if (activeTenderCount > 1) {
+    normalizedMode = 'SPLIT';
+  } else if (activeTenderCount === 1) {
+    if (normalizedCredit > 0) normalizedMode = 'CREDIT';
+    else if (normalizedUpi > 0) normalizedMode = 'UPI';
+    else normalizedMode = 'CASH';
+  }
+
+  if (activeTenderCount === 0 && normalizedTotal > 0) {
+    if (normalizedMode === 'UPI') normalizedUpi = normalizedTotal;
+    else if (normalizedMode === 'CREDIT') normalizedCredit = normalizedTotal;
+    else {
+      normalizedCash = normalizedTotal;
+      normalizedMode = 'CASH';
+    }
+  }
+
+  return {
+    paymentMode: normalizedMode,
+    cashAmount: toNullableAmount(normalizedCash),
+    upiAmount: toNullableAmount(normalizedUpi),
+    creditAmount: toNullableAmount(normalizedCredit),
+    status: normalizedCredit > 0 ? 'CREDIT' : 'PAID',
+  };
+}
+
+function isInvoiceNumberConflict(err) {
+  return err?.code === 'P2002' && typeof err?.message === 'string' && err.message.includes('invoice_number');
+}
+
 // Generate invoice number: YYYYMM-XXXX
-async function generateInvoiceNumber(shopId) {
+async function generateInvoiceNumber() {
   const now = new Date();
   const prefix = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}`;
   const lastInvoice = await prisma.invoice.findFirst({
-    where: { shopId, invoiceNumber: { startsWith: prefix } },
+    where: { invoiceNumber: { startsWith: prefix } },
     orderBy: { invoiceNumber: 'desc' },
   });
   let seq = 1;
@@ -27,8 +85,6 @@ router.post('/invoice', authenticate, requireShopOwner, async (req, res, next) =
   try {
     const { items, partyId, partyName, partyPhone, partyGstin, paymentMode, cashAmount, upiAmount, creditAmount, notes } = req.body;
     if (!items || items.length === 0) return res.status(400).json({ error: 'No items in invoice' });
-
-    const invoiceNumber = await generateInvoiceNumber(req.shopId);
 
     // Validate stock and calculate totals
     let subtotal = 0, cgst = 0, sgst = 0;
@@ -73,80 +129,105 @@ router.post('/invoice', authenticate, requireShopOwner, async (req, res, next) =
     }
 
     const totalAmount = subtotal + cgst + sgst;
-
-    // Create invoice + movements in a transaction
-    const invoice = await prisma.$transaction(async (tx) => {
-      const inv = await tx.invoice.create({
-        data: {
-          invoiceNumber,
-          shopId: req.shopId,
-          partyId,
-          partyName,
-          partyPhone,
-          partyGstin,
-          subtotal,
-          taxableAmount: subtotal,
-          cgst,
-          sgst,
-          totalAmount,
-          paymentMode: paymentMode || 'CASH',
-          cashAmount: cashAmount ? parseFloat(cashAmount) : null,
-          upiAmount: upiAmount ? parseFloat(upiAmount) : null,
-          creditAmount: creditAmount ? parseFloat(creditAmount) : null,
-          status: paymentMode === 'CREDIT' ? 'CREDIT' : 'PAID',
-          notes,
-          items: {
-            create: processedItems.map(item => ({
-              inventoryId: item.inventoryId,
-              partName: item.partName,
-              hsnCode: item.hsnCode,
-              qty: item.qty,
-              unitPrice: item.unitPrice,
-              discount: item.discount,
-              taxableAmt: item.taxableAmt,
-              gstRate: item.gstRate,
-              cgst: item.cgst,
-              sgst: item.sgst,
-              total: item.total,
-            })),
-          },
-        },
-        include: { items: true, shop: true },
-      });
-
-      // Create sale movements and update stock for each item
-      for (const item of processedItems) {
-        const profit = item.taxableAmt - (item.buyingPrice * item.qty);
-        await tx.movement.create({
-          data: {
-            shopId: req.shopId,
-            inventoryId: item.inventoryId,
-            type: 'SALE',
-            qty: item.qty,
-            unitPrice: item.unitPrice,
-            totalAmount: item.total,
-            gstAmount: item.cgst + item.sgst,
-            profit,
-            invoiceId: inv.invoiceId,
-            partyId,
-          },
-        });
-        await tx.shopInventory.update({
-          where: { inventoryId: item.inventoryId },
-          data: { stockQty: { decrement: item.qty } },
-        });
-      }
-
-      // If credit sale, update party outstanding
-      if (partyId && creditAmount && parseFloat(creditAmount) > 0) {
-        await tx.party.update({
-          where: { partyId },
-          data: { outstanding: { increment: parseFloat(creditAmount) } },
-        });
-      }
-
-      return inv;
+    const normalizedPayment = normalizeInvoicePayment({
+      paymentMode,
+      cashAmount,
+      upiAmount,
+      creditAmount,
+      totalAmount,
     });
+
+    let invoice = null;
+
+    for (let attempt = 0; attempt < MAX_INVOICE_NUMBER_RETRIES; attempt += 1) {
+      const invoiceNumber = await generateInvoiceNumber();
+
+      try {
+        // Create invoice + movements in a transaction
+        invoice = await prisma.$transaction(async (tx) => {
+          const inv = await tx.invoice.create({
+            data: {
+              invoiceNumber,
+              shopId: req.shopId,
+              partyId,
+              partyName,
+              partyPhone,
+              partyGstin,
+              subtotal,
+              taxableAmount: subtotal,
+              cgst,
+              sgst,
+              totalAmount,
+              paymentMode: normalizedPayment.paymentMode,
+              cashAmount: normalizedPayment.cashAmount,
+              upiAmount: normalizedPayment.upiAmount,
+              creditAmount: normalizedPayment.creditAmount,
+              status: normalizedPayment.status,
+              notes,
+              items: {
+                create: processedItems.map(item => ({
+                  inventoryId: item.inventoryId,
+                  partName: item.partName,
+                  hsnCode: item.hsnCode,
+                  qty: item.qty,
+                  unitPrice: item.unitPrice,
+                  discount: item.discount,
+                  taxableAmt: item.taxableAmt,
+                  gstRate: item.gstRate,
+                  cgst: item.cgst,
+                  sgst: item.sgst,
+                  total: item.total,
+                })),
+              },
+            },
+            include: { items: true, shop: true },
+          });
+
+          // Create sale movements and update stock for each item
+          for (const item of processedItems) {
+            const profit = item.taxableAmt - (item.buyingPrice * item.qty);
+            await tx.movement.create({
+              data: {
+                shopId: req.shopId,
+                inventoryId: item.inventoryId,
+                type: 'SALE',
+                qty: item.qty,
+                unitPrice: item.unitPrice,
+                totalAmount: item.total,
+                gstAmount: item.cgst + item.sgst,
+                profit,
+                invoiceId: inv.invoiceId,
+                partyId,
+              },
+            });
+            await tx.shopInventory.update({
+              where: { inventoryId: item.inventoryId },
+              data: { stockQty: { decrement: item.qty } },
+            });
+          }
+
+          if (partyId && normalizedPayment.creditAmount) {
+            await tx.party.update({
+              where: { partyId },
+              data: { outstanding: { increment: normalizedPayment.creditAmount } },
+            });
+          }
+
+          return inv;
+        });
+
+        break;
+      } catch (txnErr) {
+        if (isInvoiceNumberConflict(txnErr) && attempt < MAX_INVOICE_NUMBER_RETRIES - 1) {
+          continue;
+        }
+        throw txnErr;
+      }
+    }
+
+    if (!invoice) {
+      throw new Error('Unable to generate a unique invoice number');
+    }
 
     res.json({ success: true, invoice });
   } catch (err) {

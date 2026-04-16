@@ -4,7 +4,7 @@ import { getAuth, RecaptchaVerifier, signInWithPhoneNumber, GoogleAuthProvider, 
 // Firebase config — fill these from Firebase Console → Project Settings → Your Apps → Web App
 // Steps:
 //  1. Go to console.firebase.google.com
-//  2. Create project "autospace-prod"
+//  2. Create project "redpiston-prod"
 //  3. Enable Authentication → Sign-in methods → Phone + Google
 //  4. Add Web App → copy config below
 const firebaseConfig = {
@@ -17,8 +17,19 @@ const firebaseConfig = {
   measurementId: import.meta.env.VITE_FIREBASE_MEASUREMENT_ID || "",
 };
 
+const requiredFirebaseEnv = [
+  ['VITE_FIREBASE_API_KEY', firebaseConfig.apiKey],
+  ['VITE_FIREBASE_AUTH_DOMAIN', firebaseConfig.authDomain],
+  ['VITE_FIREBASE_PROJECT_ID', firebaseConfig.projectId],
+  ['VITE_FIREBASE_APP_ID', firebaseConfig.appId],
+];
+
+export const missingFirebaseEnvVars = requiredFirebaseEnv
+  .filter(([, value]) => !value)
+  .map(([name]) => name);
+
 // Check if Firebase is configured
-const isFirebaseConfigured = firebaseConfig.apiKey && firebaseConfig.apiKey !== "";
+const isFirebaseConfigured = missingFirebaseEnvVars.length === 0;
 
 let app, auth;
 
@@ -59,7 +70,7 @@ export async function verifyPhoneOtp(confirmationResult, otp) {
 // Google Sign-In and get Firebase token
 export async function signInWithGoogle() {
   if (!isFirebaseConfigured) {
-    return { token: 'dev-google:demo@autospace.in', dev: true };
+    return { token: 'dev-google:demo@redpiston.in', dev: true };
   }
   const provider = new GoogleAuthProvider();
   const result = await signInWithPopup(auth, provider);

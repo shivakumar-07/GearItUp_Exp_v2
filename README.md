@@ -1,4 +1,4 @@
-# GearItUp — AutoSpace ⚙️
+# GearItUp — redpiston ⚙️
 
 > **The OS for India's Auto Parts Industry.**  
 > A hyper-modern B2B2C SaaS platform bridging the gap between traditional auto part retailers (ERP/POS) and the digital consumer market (Marketplace).
@@ -11,7 +11,7 @@
 
 ## 🌟 The Core Value Proposition
 
-AutoSpace is designed for the 98% of Indian auto parts retailers who still rely on manual registers or outdated offline software. 
+redpiston is designed for the 98% of Indian auto parts retailers who still rely on manual registers or outdated offline software. 
 
 1.  **For Shop Owners**: A lightning-fast, keyboard-driven ERP that handles multi-item GST billing, instant stock tracking, party ledgers (Udhaar), and staff management.
 2.  **For Customers**: A hyperlocal marketplace to find parts with a **Fitment Guarantee** based on their specific vehicle (Make → Model → Year → Variant).
@@ -79,6 +79,16 @@ AutoSpace is designed for the 98% of Indian auto parts retailers who still rely 
 
 ---
 
+## 📘 Engineering Documentation
+
+For future developers and team onboarding, use these docs as the source of truth:
+
+- `docs/DEVELOPER_HANDBOOK.md` — architecture, module map, data model, and end-to-end flow diagrams
+- `docs/MVP_AND_FEATURE_ROADMAP.md` — MVP completion plan and gradual feature integration strategy
+- `docs/DATA_TABLE_PURPOSE_AND_CONNECTIONS.md` — table-by-table purpose, column definitions, and relationship rationale
+
+---
+
 ## 🚀 Getting Started
 
 ### 1. Prerequisites
@@ -118,6 +128,67 @@ npm run dev
 
 ---
 
+## 🚀 Production Deployment (Render + Vercel)
+
+### 1. Deploy Backend on Render
+
+This repo now includes [render.yaml](render.yaml) for a one-service backend blueprint.
+
+1. In Render Dashboard, create a new **Blueprint** from this repository.
+2. Select the `autospace-backend` service.
+3. Fill required env vars from [backend/.env.example](backend/.env.example).
+4. Deploy and note your live backend URL, for example:
+
+```text
+https://autospace-backend.onrender.com
+```
+
+### 2. First Live Backend Smoke Check
+
+Run the authenticated write-flow smoke test against the Render URL:
+
+```bash
+SMOKE_BASE_URL="https://your-backend.onrender.com" \
+SMOKE_FIREBASE_TOKEN="<real-firebase-id-token-or-dev-token>" \
+npm run smoke:api
+```
+
+What it verifies end-to-end:
+- Auth via `/api/auth/firebase`
+- Inventory write via `/api/shop/inventory/purchase`
+- POS write via `/api/billing/invoice`
+- Inventory adjustment via `/api/shop/inventory/adjust`
+
+### 3. Wire Frontend Env in Vercel
+
+Set frontend API base URL to your Render backend for both Preview and Production:
+
+```bash
+echo "https://your-backend.onrender.com" | vercel env add VITE_API_URL production
+echo "https://your-backend.onrender.com" | vercel env add VITE_API_URL preview
+```
+
+If this is a new Vercel project:
+
+```bash
+vercel project add autospace-mvp
+```
+
+Deploy:
+
+```bash
+npm run deploy:vercel:prod
+```
+
+### 4. Frontend Live Smoke Check
+
+1. Open the production URL from Vercel output.
+2. Login and complete one POS invoice.
+3. Confirm stock is decremented in Inventory page.
+4. Confirm sale appears in Reports/Dashboard metrics.
+
+---
+
 ## 🏛️ API Quick Reference
 
 | Method | Endpoint | Description |
@@ -125,9 +196,10 @@ npm run dev
 | `POST` | `/api/auth/request-otp` | Request Phone OTP (Rate limited) |
 | `POST` | `/api/billing/invoice` | Generate GST Invoice & deduct stock |
 | `GET` | `/api/catalog/search` | Master catalog search with fitment filters |
+| `GET` | `/api/shop/inventory` | Get shop inventory with recent movements |
 | `GET` | `/api/shop/staff` | List staff members and permissions |
-| `POST` | `/api/marketplace/order`| Create multi-vendor marketplace order |
-| `GET` | `/api/dashboard/stats` | Pre-computed KPI metrics for shop owner |
+| `POST` | `/api/marketplace/orders` | Create marketplace order(s), grouped by shop |
+| `GET` | `/api/shop/dashboard` | KPI metrics for shop owner dashboard |
 
 ---
 

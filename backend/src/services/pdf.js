@@ -47,7 +47,7 @@ export const generateInvoicePdf = (invoice) => {
     pageSize: 'A4',
     pageMargins: [40, 60, 40, 60],
     content: [
-      { text: shop?.name || 'AutoSpace Shop', style: 'header' },
+      { text: shop?.name || 'redpiston Shop', style: 'header' },
       { text: shop?.address || '', style: 'subheader' },
       { text: `GSTIN: ${shop?.gstin || 'N/A'}`, style: 'subheader' },
       { text: `Phone: ${shop?.phone || ''}`, style: 'subheader' },

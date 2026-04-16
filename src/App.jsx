@@ -1,28 +1,38 @@
-import { useState, useCallback, useEffect, Component, createContext, useContext, useMemo, lazy, Suspense } from "react";
+import { useState, useCallback, useEffect, useRef, Component, useContext, useMemo, lazy, Suspense } from "react";
 import { Routes, Route, Navigate, useNavigate, useLocation } from "react-router-dom";
 import { T, FONT, GLOBAL_CSS } from "./theme";
 import { fmt, uid } from "./utils";
 import { useStore } from "./store";
 import { Toast, useToast, Btn } from "./components/ui";
 import { setTokens, clearTokens, api } from "./api/client.js";
-import { syncInvoice, syncPurchase, syncAdjustment } from "./api/sync.js";
+import {
+  syncInvoice,
+  syncPurchase,
+  syncAdjustment,
+  syncProductSave,
+  setSyncScope,
+  getSyncStatus,
+  subscribeSyncStatus,
+  flushSyncQueue,
+  getSyncQueueSnapshot,
+  retrySyncQueueItem,
+  discardSyncQueueItem,
+} from "./api/sync.js";
 import { ShortcutOverlay } from "./components/ShortcutOverlay";
 import { CommandPalette } from "./components/CommandPalette";
+import { SyncCenterModal } from "./components/SyncCenterModal";
+import { AppCtx } from "./appContext";
 
 // Always-loaded: auth, shell chrome, modals (needed on first render)
-import { RequireAuth, getDefaultRoute } from "./components/RequireAuth";
 import { ProfileDropdown } from "./components/ProfileDropdown";
 import { Avatar } from "./components/Avatar";
 import { ProductModal } from "./components/ProductModal";
 import { BulkStockInModal } from "./components/BulkStockInModal";
-import { CartDrawer } from "./marketplace/components/CartDrawer";
 
 // ── Lazy-loaded pages (each becomes its own JS chunk, loaded on first visit) ──
 // Named-export pages need the .then() unwrap since React.lazy requires a default export.
 const LoginPage         = lazy(() => import("./pages/LoginPage"));
 const ResetPasswordPage = lazy(() => import("./pages/ResetPasswordPage"));
-const ProfilePage       = lazy(() => import("./pages/ProfilePage").then(m => ({ default: m.ProfilePage })));
-const SettingsPage      = lazy(() => import("./pages/SettingsPage").then(m => ({ default: m.SettingsPage })));
 
 // ERP pages — only a SHOP_OWNER ever loads these
 const DashboardPage  = lazy(() => import("./pages/DashboardPage").then(m => ({ default: m.DashboardPage })));
@@ -30,17 +40,7 @@ const InventoryPage  = lazy(() => import("./pages/InventoryPage").then(m => ({ d
 const POSBillingPage = lazy(() => import("./pages/POSBillingPage").then(m => ({ default: m.POSBillingPage })));
 const HistoryPage    = lazy(() => import("./pages/HistoryPage").then(m => ({ default: m.HistoryPage })));
 const ReportsPage    = lazy(() => import("./pages/ReportsPage").then(m => ({ default: m.ReportsPage })));
-const OrdersPage     = lazy(() => import("./pages/OrdersPage").then(m => ({ default: m.OrdersPage })));
-const PartiesPage    = lazy(() => import("./pages/PartiesPage").then(m => ({ default: m.PartiesPage })));
-const WorkshopPage   = lazy(() => import("./pages/WorkshopPage").then(m => ({ default: m.WorkshopPage })));
-const PricingPage    = lazy(() => import("./pages/PricingPage").then(m => ({ default: m.PricingPage })));
-
-// Marketplace pages — only a CUSTOMER ever loads these
-const MarketplaceHome    = lazy(() => import("./marketplace/pages/MarketplaceHome").then(m => ({ default: m.MarketplaceHome })));
-const ProductDetailsPage = lazy(() => import("./marketplace/pages/ProductDetailsPage").then(m => ({ default: m.ProductDetailsPage })));
-const CheckoutPage       = lazy(() => import("./marketplace/pages/CheckoutPage").then(m => ({ default: m.CheckoutPage })));
-const OrderTrackingPage  = lazy(() => import("./marketplace/pages/OrderTrackingPage").then(m => ({ default: m.OrderTrackingPage })));
-const AdminPage          = lazy(() => import("./marketplace/pages/AdminPage").then(m => ({ default: m.AdminPage })));
+const LandingPage   = lazy(() => import("./pages/LandingPage").then(m => ({ default: m.LandingPage })));
 
 // Shared page-transition fallback — skeletal shimmer instead of a spinner
 const PageLoader = () => (
@@ -93,22 +93,114 @@ const NAV_ITEMS = [
   { key: "dashboard", path: "/dashboard", icon: "◈", label: "Dashboard" },
   { key: "inventory", path: "/inventory", icon: "⬡", label: "Inventory" },
   { key: "pos", path: "/billing", icon: "🧾", label: "POS" },
-  { key: "parties", path: "/parties", icon: "👥", label: "Parties" },
-  { key: "workshop", path: "/workshop", icon: "🔧", label: "Workshop" },
-  { key: "history", path: "/history", icon: "⊞", label: "History" },
+  { key: "history", path: "/history", icon: "🕘", label: "History" },
   { key: "reports", path: "/reports", icon: "📊", label: "Reports" },
-  { key: "orders", path: "/orders", icon: "◎", label: "Orders" },
 ];
 
-const MP_NAV = [
-  { key: "home", path: "/marketplace", icon: "🏠", label: "Home", color: "#10B981" },
-  { key: "orders", path: "/marketplace/orders", icon: "📦", label: "Orders", color: "#0EA5E9" },
-  { key: "pricing", path: "/marketplace/pricing", icon: "💎", label: "Pricing", color: "#D97706" },
-];
+const DAY_MS = 86400000;
+const SALES_CUTOFF_REFRESH_MS = 60000;
+const APP_BOOT_TS = Date.now();
 
-// ========== SHARED CONTEXT (avoids passing props through closure) ==========
-// Defined at module level so the reference is stable across renders.
-export const AppCtx = createContext(null);
+function SyncStatusPill({ status, onOpenCenter, onSyncNow }) {
+  const pending = Number(status?.pendingCount || 0);
+  const syncing = Boolean(status?.isSyncing);
+  const offline = status?.isOnline === false;
+  const lastSyncedLabel = status?.lastSyncedAt
+    ? new Date(status.lastSyncedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
+    : null;
+
+  let label = "Synced";
+  let color = T.emerald;
+  let background = T.emeraldBg;
+
+  if (offline && pending > 0) {
+    label = `Offline · ${pending} pending`;
+    color = T.crimson;
+    background = T.crimsonBg;
+  } else if (syncing) {
+    label = pending > 0 ? `Syncing ${pending}...` : "Syncing...";
+    color = T.sky;
+    background = T.skyBg;
+  } else if (pending > 0) {
+    label = `${pending} pending`;
+    color = T.amber;
+    background = T.amberGlow;
+  } else if (lastSyncedLabel) {
+    label = `Synced ${lastSyncedLabel}`;
+  }
+
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+      <button
+        onClick={() => onOpenCenter?.()}
+        title="Open Sync Center"
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 8,
+          borderRadius: 999,
+          border: `1px solid ${color}44`,
+          background,
+          color,
+          fontSize: 11,
+          fontWeight: 700,
+          padding: "5px 10px",
+          fontFamily: FONT.ui,
+          cursor: "pointer",
+          transition: "all 0.15s ease",
+        }}
+      >
+        {syncing ? (
+          <span
+            style={{
+              width: 10,
+              height: 10,
+              borderRadius: "50%",
+              border: `2px solid ${color}`,
+              borderTopColor: "transparent",
+              animation: "spin 0.85s linear infinite",
+            }}
+          />
+        ) : (
+          <span
+            style={{
+              width: 7,
+              height: 7,
+              borderRadius: "50%",
+              background: color,
+              boxShadow: `0 0 8px ${color}88`,
+              animation: pending > 0 ? "pulse 1.1s ease-in-out infinite" : "none",
+            }}
+          />
+        )}
+        <span>{label}</span>
+        {pending > 0 && <span style={{ fontSize: 10, opacity: 0.9 }}>Queue</span>}
+      </button>
+
+      {pending > 0 && !syncing && (
+        <button
+          onClick={() => onSyncNow?.()}
+          title="Sync pending changes now"
+          style={{
+            width: 26,
+            height: 26,
+            borderRadius: 8,
+            border: `1px solid ${T.amber}55`,
+            background: T.amberGlow,
+            color: T.amber,
+            fontSize: 14,
+            fontWeight: 900,
+            lineHeight: 1,
+            cursor: "pointer",
+            animation: "pulse 1.6s ease-in-out infinite",
+          }}
+        >
+          ↻
+        </button>
+      )}
+    </div>
+  );
+}
 
 // ========== ERP SHELL ==========
 // Defined at MODULE LEVEL so React sees a stable component type on every render.
@@ -119,20 +211,33 @@ function ERPShell({ children }) {
     pModal, setPModal, catalogModal, setCatalogModal,
     toast, toasts, removeToast,
     currentUser, handleLogout,
+    syncStatus, syncNow,
+    openSyncCenter,
+    syncCenterOpen, setSyncCenterOpen,
+    syncQueueItems, syncActionBusy, syncItemBusy,
+    handleRetrySyncItem, handleDiscardSyncItem,
     saveProduct, handleBulkStockIn,
   } = useContext(AppCtx);
 
-  const { products, movements, orders, shops, activeShopId, resetAll, saveShops } = useStore();
+  const { products, movements, shops, activeShopId, resetAll, saveShops } = useStore();
   const navigate = useNavigate();
   const location = useLocation();
   const [shopEdit, setShopEdit] = useState(null);
+  const [salesCutoffTs, setSalesCutoffTs] = useState(() => APP_BOOT_TS - DAY_MS);
 
-  const todaySales = useMemo(() => (movements || []).filter((m) => m.shopId === activeShopId && m.type === "SALE" && m.date >= Date.now() - 86400000), [movements, activeShopId]);
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      setSalesCutoffTs(Date.now() - DAY_MS);
+    }, SALES_CUTOFF_REFRESH_MS);
+
+    return () => window.clearInterval(timer);
+  }, []);
+
+  const todaySales = useMemo(() => (movements || []).filter((m) => m.shopId === activeShopId && m.type === "SALE" && m.date >= salesCutoffTs), [movements, activeShopId, salesCutoffTs]);
   const todayRev = useMemo(() => todaySales.reduce((s, m) => s + m.total, 0), [todaySales]);
   const stockSt = (p) => { if (p.stock <= 0) return "out"; if (p.stock < p.minStock) return "low"; return "ok"; };
   const lowStockProducts = useMemo(() => (products || []).filter((p) => p.shopId === activeShopId && stockSt(p) !== "ok"), [products, activeShopId]);
   const lowCount = lowStockProducts.length;
-  const pendingOrders = useMemo(() => (orders || []).filter((o) => o.shopId === activeShopId && (o.status === "NEW" || o.status === "placed")).length, [orders, activeShopId]);
   const shop = useMemo(() => (shops || []).find((s) => s.id === activeShopId) || { name: "My Shop", city: "Location" }, [shops, activeShopId]);
   const currentPath = location.pathname;
 
@@ -142,7 +247,11 @@ function ERPShell({ children }) {
   });
   const dismissLowStock = () => {
     setLowStockDismissed(true);
-    try { sessionStorage.setItem("vl_low_stock_dismissed", "1"); } catch {}
+    try {
+      sessionStorage.setItem("vl_low_stock_dismissed", "1");
+    } catch (err) {
+      console.warn("[UI] Could not persist low stock banner state:", err?.message || err);
+    }
   };
 
   return (
@@ -175,6 +284,7 @@ function ERPShell({ children }) {
           )}
         </div>
         <div style={{ flex: 1 }} />
+        <SyncStatusPill status={syncStatus} onSyncNow={syncNow} onOpenCenter={openSyncCenter} />
         {todayRev > 0 && (<div className="topbar-secondary" style={{ background: T.emeraldBg, border: `1px solid ${T.emerald}33`, borderRadius: 8, padding: "5px 12px", fontSize: 12, color: T.emerald, fontWeight: 700, fontFamily: FONT.mono, display: "flex", alignItems: "center", gap: 6 }}>📈 {fmt(todayRev)}</div>)}
         {lowCount > 0 && (<button onClick={() => navigate("/inventory")} style={{ background: T.crimsonBg, border: `1px solid ${T.crimson}33`, borderRadius: 8, padding: "5px 12px", fontSize: 12, color: T.crimson, fontWeight: 700, cursor: "pointer", fontFamily: FONT.ui, display: "flex", alignItems: "center", gap: 5 }}>⚠ {lowCount}</button>)}
         <Btn size="sm" variant="ghost" onClick={() => navigate("/billing")} style={{ borderColor: T.border }}>🧾</Btn>
@@ -217,6 +327,17 @@ function ERPShell({ children }) {
       <ProductModal open={pModal.open} product={pModal.product} products={products} activeShopId={activeShopId} onClose={() => setPModal({ open: false, product: null })} onSave={saveProduct} toast={toast} />
       {/* Add new products — cart/bucket procurement flow */}
       <BulkStockInModal open={catalogModal} onClose={() => setCatalogModal(false)} onSave={handleBulkStockIn} toast={toast} activeShopId={activeShopId} />
+      <SyncCenterModal
+        open={syncCenterOpen}
+        onClose={() => setSyncCenterOpen(false)}
+        status={syncStatus}
+        items={syncQueueItems}
+        onSyncNow={syncNow}
+        onRetryItem={handleRetrySyncItem}
+        onDiscardItem={handleDiscardSyncItem}
+        actionBusy={syncActionBusy}
+        itemBusy={syncItemBusy}
+      />
       <Toast items={toasts} onRemove={removeToast} />
 
       {/* LEFT SIDEBAR / BOTTOM NAV */}
@@ -281,19 +402,6 @@ function ERPShell({ children }) {
               }}>
                 {n.label}
               </span>
-              {/* Badge: pending orders */}
-              {n.key === "orders" && pendingOrders > 0 && (
-                <span style={{
-                  position: "absolute", top: 3, right: 7,
-                  background: T.crimson, color: "#fff",
-                  fontSize: 8, borderRadius: "50%",
-                  width: 14, height: 14,
-                  display: "flex", alignItems: "center", justifyContent: "center",
-                  fontWeight: 900,
-                }}>
-                  {pendingOrders}
-                </span>
-              )}
               {/* Badge: low stock */}
               {n.key === "inventory" && lowCount > 0 && (
                 <span style={{
@@ -316,100 +424,6 @@ function ERPShell({ children }) {
   );
 }
 
-// ========== MARKETPLACE SHELL ==========
-function MPShell({ children }) {
-  const { toasts, removeToast } = useContext(AppCtx);
-  const navigate = useNavigate();
-  const location = useLocation();
-  const currentPath = location.pathname;
-
-  return (
-    <>
-      <style>{GLOBAL_CSS}</style>
-      <div className="mp-content" style={{ paddingLeft: 68 }}>{children}</div>
-      <CartDrawer onCheckout={() => navigate("/marketplace/checkout")} />
-      <div className="mp-sidebar" style={{
-        position: "fixed", left: 0, top: 0, bottom: 0, width: 68, zIndex: 400,
-        background: `${T.surface}f0`, backdropFilter: "blur(16px)",
-        borderRight: `1px solid ${T.border}`,
-        display: "flex", flexDirection: "column", alignItems: "center",
-        paddingTop: 14, gap: 3,
-      }}>
-        <div className="sidebar-brand" style={{
-          width: 40, height: 40, borderRadius: 12,
-          background: `linear-gradient(135deg, ${T.amber}, ${T.amberDim})`,
-          display: "flex", alignItems: "center", justifyContent: "center",
-          fontSize: 16, boxShadow: `0 2px 12px ${T.amber}44`, marginBottom: 6,
-        }}>
-          ⚙️
-        </div>
-        <div className="sidebar-brand" style={{ fontSize: 7, color: T.amber, fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 10 }}>
-          Market
-        </div>
-        {MP_NAV.map((a) => {
-          const isActive = currentPath === a.path || currentPath.startsWith(a.path + "/");
-          return (
-            <button
-              key={a.key}
-              onClick={() => navigate(a.path)}
-              title={a.label}
-              style={{
-                width: 58, height: 48, borderRadius: 10,
-                border: "none",
-                cursor: "pointer",
-                background: isActive ? `${a.color}18` : "transparent",
-                display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
-                gap: 2, transition: "background 0.15s",
-                padding: "4px 0", position: "relative", outline: "none",
-              }}
-              onMouseEnter={e => { if (!isActive) e.currentTarget.style.background = `${a.color}0d`; }}
-              onMouseLeave={e => { if (!isActive) e.currentTarget.style.background = "transparent"; }}
-            >
-              {isActive && (
-                <span style={{
-                  position: "absolute", left: -5, top: "50%",
-                  transform: "translateY(-50%)",
-                  width: 3, height: 20, borderRadius: 3,
-                  background: a.color,
-                }} />
-              )}
-              <span style={{ fontSize: 15 }}>{a.icon}</span>
-              <span style={{
-                fontSize: 8, fontWeight: 700,
-                color: isActive ? a.color : T.t3,
-                fontFamily: FONT.ui, letterSpacing: "0.02em",
-                transition: "color 0.15s",
-              }}>
-                {a.label}
-              </span>
-            </button>
-          );
-        })}
-        <div className="sidebar-spacer" style={{ flex: 1 }} />
-      </div>
-      <Toast items={toasts} onRemove={removeToast} />
-    </>
-  );
-}
-
-// ========== ADMIN SHELL ==========
-function AdminShell({ children }) {
-  const { toasts, removeToast } = useContext(AppCtx);
-
-  return (
-    <>
-      <style>{GLOBAL_CSS}</style>
-      <div className="mp-content" style={{ paddingLeft: 68 }}>{children}</div>
-      <div className="admin-sidebar" style={{ position: "fixed", left: 0, top: 0, bottom: 0, width: 68, zIndex: 400, background: `${T.surface}ee`, backdropFilter: "blur(12px)", borderRight: `1px solid ${T.border}`, display: "flex", flexDirection: "column", alignItems: "center", paddingTop: 20, gap: 4 }}>
-        <div className="sidebar-brand" style={{ width: 40, height: 40, borderRadius: 12, background: "linear-gradient(135deg, #4F46E5, #7C3AED)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 18, boxShadow: "0 4px 16px rgba(79,70,229,0.4)", marginBottom: 12 }}>🛡️</div>
-        <div className="sidebar-brand" style={{ fontSize: 7, color: "#A78BFA", fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.08em" }}>Admin</div>
-        <div className="sidebar-spacer" style={{ flex: 1 }} />
-      </div>
-      <Toast items={toasts} onRemove={removeToast} />
-    </>
-  );
-}
-
 // ========== MAIN APP COMPONENT ==========
 function AppContent() {
   const navigate = useNavigate();
@@ -424,16 +438,19 @@ function AppContent() {
         if (rt) setTokens(null, rt);
         return user;
       }
-    } catch {}
+    } catch (err) {
+      console.warn("[Auth] Could not hydrate local user session:", err?.message || err);
+    }
     return null;
   });
 
   // ── Store (always called — hooks rule) ──
   const {
-    products, movements, orders, shops, parties, vehicles, jobCards,
-    saveProducts, saveMovements, saveOrders, saveShops, saveParties, saveVehicles, saveJobCards,
-    auditLog, receipts, saveReceipts,
-    loaded, activeShopId, setActiveShopId, persistShopId, logAudit, resetAll, clearStore,
+    products, movements, orders, parties, vehicles, jobCards,
+    saveProducts, saveMovements,
+    receipts, saveReceipts,
+    loaded, activeShopId, setActiveShopId, logAudit, clearStore,
+    syncFromAPI: syncStoreFromAPI,
   } = useStore();
 
   // ── UI state ──
@@ -441,7 +458,138 @@ function AppContent() {
   const [catalogModal, setCatalogModal] = useState(false);
   const [shortcutOverlay, setShortcutOverlay] = useState(false);
   const [cmdPaletteOpen, setCmdPaletteOpen] = useState(false);
+  const [isLoggingOut, setIsLoggingOut] = useState(false);
+  const [syncCenterOpen, setSyncCenterOpen] = useState(false);
+  const [syncActionBusy, setSyncActionBusy] = useState(false);
+  const [syncItemBusy, setSyncItemBusy] = useState({});
+  const [syncStatus, setSyncStatus] = useState(() => getSyncStatus());
+  const [syncQueueItems, setSyncQueueItems] = useState(() => getSyncQueueSnapshot().items || []);
+  const lastDbRefreshTsRef = useRef(0);
   const { items: toasts, add: toast, remove: removeToast } = useToast();
+
+  const refreshSyncCenterState = useCallback(() => {
+    const snapshot = getSyncQueueSnapshot();
+    setSyncStatus(snapshot.status);
+    setSyncQueueItems(snapshot.items);
+    return snapshot;
+  }, []);
+
+  useEffect(() => {
+    const unsubscribe = subscribeSyncStatus((next) => {
+      setSyncStatus(next);
+      const snapshot = getSyncQueueSnapshot();
+      setSyncQueueItems(snapshot.items);
+    });
+    return () => unsubscribe();
+  }, []);
+
+  useEffect(() => {
+    if (currentUser?.userId) {
+      setSyncScope({ userId: currentUser.userId, shopId: currentUser.shopId || activeShopId || null });
+    } else {
+      setSyncScope(null);
+    }
+    refreshSyncCenterState();
+  }, [currentUser?.userId, currentUser?.shopId, activeShopId, refreshSyncCenterState]);
+
+  useEffect(() => {
+    if (!currentUser) return;
+    flushSyncQueue({ reason: "session-ready", timeoutMs: 5000 }).catch((err) => {
+      console.warn("[Sync] Session startup flush failed:", err?.message || err);
+    });
+  }, [currentUser]);
+
+  useEffect(() => {
+    if (!currentUser?.userId) return;
+    syncStoreFromAPI().catch((err) => {
+      console.warn("[Store] Session DB sync failed:", err?.message || err);
+    });
+  }, [currentUser?.userId, currentUser?.shopId, syncStoreFromAPI]);
+
+  useEffect(() => {
+    if (!currentUser?.userId) return;
+    if (syncStatus.isSyncing || syncStatus.pendingCount > 0) return;
+
+    const now = Date.now();
+    if (now - lastDbRefreshTsRef.current < 2500) return;
+    lastDbRefreshTsRef.current = now;
+
+    syncStoreFromAPI().catch((err) => {
+      console.warn("[Store] Post-sync DB refresh failed:", err?.message || err);
+    });
+  }, [currentUser?.userId, syncStatus.isSyncing, syncStatus.pendingCount, syncStoreFromAPI]);
+
+  useEffect(() => {
+    const handleBeforeUnload = (e) => {
+      if (!syncStatus.pendingCount) return undefined;
+      e.preventDefault();
+      e.returnValue = "";
+      return "";
+    };
+
+    window.addEventListener("beforeunload", handleBeforeUnload);
+    return () => window.removeEventListener("beforeunload", handleBeforeUnload);
+  }, [syncStatus.pendingCount]);
+
+  const syncNow = useCallback(async () => {
+    setSyncActionBusy(true);
+    try {
+      const result = await flushSyncQueue({ reason: "manual", timeoutMs: 12000 });
+      refreshSyncCenterState();
+      if (result.synced) {
+        toast("All local changes synced to backend.", "success", "Sync Complete");
+      } else {
+        toast(`${result.pendingCount} change(s) still pending sync.`, "warn", "Sync Pending");
+      }
+      return result;
+    } finally {
+      setSyncActionBusy(false);
+    }
+  }, [toast, refreshSyncCenterState]);
+
+  const openSyncCenter = useCallback(() => {
+    refreshSyncCenterState();
+    setSyncCenterOpen(true);
+  }, [refreshSyncCenterState]);
+
+  const handleRetrySyncItem = useCallback(async (itemId) => {
+    if (!itemId) return;
+    setSyncItemBusy((prev) => ({ ...prev, [itemId]: true }));
+    try {
+      const result = await retrySyncQueueItem(itemId, { timeoutMs: 12000 });
+      const snapshot = result.snapshot || refreshSyncCenterState();
+      setSyncStatus(snapshot.status);
+      setSyncQueueItems(snapshot.items);
+      if (result.synced) {
+        toast("Queue item synced successfully.", "success", "Retry Success");
+      } else {
+        toast("Retry attempted. Some items are still pending.", "warn", "Retry Done");
+      }
+    } catch (err) {
+      toast(err?.message || "Failed to retry sync item.", "error", "Retry Failed");
+    } finally {
+      setSyncItemBusy((prev) => {
+        const next = { ...prev };
+        delete next[itemId];
+        return next;
+      });
+    }
+  }, [toast, refreshSyncCenterState]);
+
+  const handleDiscardSyncItem = useCallback((itemId) => {
+    if (!itemId) return;
+    const ok = confirm("Discard this pending sync item? This keeps local data but skips backend write for this item.");
+    if (!ok) return;
+
+    const result = discardSyncQueueItem(itemId);
+    if (result?.snapshot) {
+      setSyncStatus(result.snapshot.status);
+      setSyncQueueItems(result.snapshot.items);
+    } else {
+      refreshSyncCenterState();
+    }
+    toast("Pending sync item discarded.", "warn", "Item Discarded");
+  }, [toast, refreshSyncCenterState]);
 
   // ── Keyboard shortcut system ──
   useEffect(() => {
@@ -456,13 +604,14 @@ function AppContent() {
           case "n": e.preventDefault(); navigate("/billing"); break;
           case "p": e.preventDefault(); navigate("/billing"); break;
           case "i": e.preventDefault(); navigate("/inventory"); break;
-          case "h": e.preventDefault(); navigate("/history"); break;
           case "k": e.preventDefault(); setCmdPaletteOpen(true); break;
           case "b":
             e.preventDefault();
-            // Focus barcode input if it exists on the page
-            const barcodeInput = document.querySelector('[data-barcode-input]');
-            if (barcodeInput) barcodeInput.focus();
+            {
+              // Focus barcode input if it exists on the page
+              const barcodeInput = document.querySelector('[data-barcode-input]');
+              if (barcodeInput) barcodeInput.focus();
+            }
             break;
           default: break;
         }
@@ -480,32 +629,87 @@ function AppContent() {
 
   // ── Auth handlers ──
   const handleLogin = useCallback((user) => {
+    let lastUserId = null;
+    try {
+      lastUserId = localStorage.getItem("as_last_user_id");
+    } catch (err) {
+      console.warn("[Auth] Could not read last user id:", err?.message || err);
+    }
+
+    if (lastUserId && user?.userId && lastUserId !== user.userId) {
+      clearStore();
+    }
+
     setCurrentUser(user);
     // Propagate the real shopId from the DB so all API calls and store filters
     // use the correct UUID (not the hardcoded "s1" seed default).
     if (user?.shopId) {
       setActiveShopId(user.shopId);
-      try { localStorage.setItem("vl_shopId", user.shopId); } catch {}
-      try { localStorage.setItem("as_user", JSON.stringify(user)); } catch {}
+      try {
+        localStorage.setItem("vl_shopId", user.shopId);
+      } catch (err) {
+        console.warn("[Auth] Could not persist shop id:", err?.message || err);
+      }
+      try {
+        localStorage.setItem("as_user", JSON.stringify(user));
+      } catch (err) {
+        console.warn("[Auth] Could not persist user payload:", err?.message || err);
+      }
     }
-    const dest = getDefaultRoute(user?.role);
-    navigate(dest, { replace: true });
-  }, [navigate, setActiveShopId]);
+    if (user?.userId) {
+      try {
+        localStorage.setItem("as_last_user_id", user.userId);
+      } catch (err) {
+        console.warn("[Auth] Could not persist last user id:", err?.message || err);
+      }
+    }
+    syncStoreFromAPI().catch((err) => {
+      console.warn("[Store] Post-login DB sync failed:", err?.message || err);
+    });
+    navigate("/dashboard", { replace: true });
+  }, [navigate, setActiveShopId, clearStore, syncStoreFromAPI]);
 
-  const handleLogout = useCallback(() => {
-    // Revoke the refresh token in the backend (fire-and-forget)
-    const rt = localStorage.getItem("as_refresh_token");
-    api.post("/api/auth/logout", { refreshToken: rt }).catch(() => {});
-    
-    // Clear both auth tokens and application store data
-    clearTokens();
-    clearStore(); // Wipes all vl_* from localStorage and state
-    
-    localStorage.removeItem("as_user");
-    localStorage.removeItem("as_refresh_token");
-    setCurrentUser(null);
-    navigate("/login", { replace: true });
-  }, [navigate, clearStore]);
+  const handleLogout = useCallback(async ({ logoutAll = false } = {}) => {
+    if (isLoggingOut) return false;
+
+    const pendingCount = getSyncStatus().pendingCount;
+    if (pendingCount > 0) {
+      toast(`Syncing ${pendingCount} pending change(s) before logout...`, "info", "Sync Required");
+      const result = await flushSyncQueue({ reason: "logout", timeoutMs: 18000 });
+      if (!result.synced) {
+        const forceLogout = confirm(
+          `${result.pendingCount} sync item(s) are still pending. Log out anyway?\n\n` +
+          "Pending sync data will stay on this device for this account and retry next time you sign in."
+        );
+        if (!forceLogout) {
+          toast("Logout cancelled. Resolve pending sync items first.", "warn", "Logout Cancelled");
+          return false;
+        }
+        toast("Logging out with pending sync. Queue will retry on next sign-in.", "warn", "Sync Deferred");
+      }
+    }
+
+    setIsLoggingOut(true);
+    try {
+      const rt = localStorage.getItem("as_refresh_token");
+      if (logoutAll) {
+        await api.post("/api/auth/logout-all", {});
+      } else {
+        await api.post("/api/auth/logout", { refreshToken: rt });
+      }
+    } catch {
+      // Proceed with local logout even if revoke endpoint is unavailable.
+    } finally {
+      clearTokens();
+      localStorage.removeItem("as_user");
+      localStorage.removeItem("as_refresh_token");
+      setCurrentUser(null);
+      setIsLoggingOut(false);
+      navigate("/login", { replace: true });
+    }
+
+    return true;
+  }, [navigate, isLoggingOut, toast]);
 
   // ── Business handlers ──
   const saveProduct = useCallback((p) => {
@@ -520,6 +724,11 @@ function AppContent() {
     }
     const exists = products.find((x) => x.id === p.id);
     saveProducts(exists ? products.map((x) => (x.id === p.id ? p : x)) : [...products, p]);
+    if (exists) {
+      syncProductSave(p).catch((err) => {
+        console.warn("[Sync] Product update queueing failed:", err?.message || err);
+      });
+    }
     logAudit(exists ? "PRODUCT_UPDATED" : "PRODUCT_CREATED", "product", p.id, `${p.name} (${p.sku})`);
     return true;
   }, [products, saveProducts, logAudit, toast]);
@@ -612,7 +821,9 @@ function AppContent() {
     }
     const sel = products.find((p) => p.id === data.productId);
     const isCredit = data.paymentMode === "Udhaar" || (data.payments && data.payments.Credit > 0);
-    const paymentStr = data.payments ? Object.entries(data.payments).filter(([_, a]) => a > 0).map(([k, a]) => `${k}:${a}`).join(", ") : data.payment;
+    const paymentStr = data.payments
+      ? Object.entries(data.payments).filter((entry) => entry[1] > 0).map(([mode, amount]) => `${mode}:${amount}`).join(", ")
+      : data.payment;
     saveMovements([...movements, {
       id: "m" + uid(), shopId: activeShopId, productId: data.productId, productName: sel?.name || "",
       type: isQuote ? "ESTIMATE" : "SALE", qty: data.qty, unitPrice: data.sellPrice, sellingPrice: data.sellPrice,
@@ -661,7 +872,9 @@ function AppContent() {
     data.items.forEach((item) => {
       if (!isQuote) updatedProducts = updatedProducts.map((p) => (p.id === item.productId ? { ...p, stock: Math.max(0, p.stock - item.qty) } : p));
       const isCredit = data.paymentMode === "Udhaar" || (data.payments && data.payments.Credit > 0);
-      const paymentStr = data.payments ? Object.entries(data.payments).filter(([_, a]) => a > 0).map(([k, a]) => `${k}:${a}`).join(", ") : "";
+      const paymentStr = data.payments
+        ? Object.entries(data.payments).filter((entry) => entry[1] > 0).map(([mode, amount]) => `${mode}:${amount}`).join(", ")
+        : "";
       newMovements.push({
         id: "m" + uid(), shopId: activeShopId, productId: item.productId, productName: item.name,
         type: isQuote ? "ESTIMATE" : "SALE", qty: item.qty, unitPrice: item.sellPrice, sellingPrice: item.sellPrice,
@@ -799,14 +1012,24 @@ function AppContent() {
     catalogModal, setCatalogModal,
     toast, toasts, removeToast,
     currentUser, handleLogout,
+    syncStatus, syncNow,
+    openSyncCenter,
+    syncCenterOpen, setSyncCenterOpen,
+    syncQueueItems, syncActionBusy, syncItemBusy,
+    handleRetrySyncItem, handleDiscardSyncItem,
     saveProduct, handleBulkStockIn,
-  }), [pModal, setPModal, catalogModal, setCatalogModal, toast, toasts, removeToast, currentUser, handleLogout, saveProduct, handleBulkStockIn]);
-
-  // Generate collision-proof invoice number
-  const genInvoiceNo = useCallback(() => {
-    const shopSuffix = (activeShopId || "0000").slice(-4).toUpperCase();
-    return shopSuffix + "-" + Date.now().toString(36).toUpperCase();
-  }, [activeShopId]);
+  }), [
+    pModal, setPModal,
+    catalogModal, setCatalogModal,
+    toast, toasts, removeToast,
+    currentUser, handleLogout,
+    syncStatus, syncNow,
+    openSyncCenter,
+    syncCenterOpen, setSyncCenterOpen,
+    syncQueueItems, syncActionBusy, syncItemBusy,
+    handleRetrySyncItem, handleDiscardSyncItem,
+    saveProduct, handleBulkStockIn,
+  ]);
 
   // ── Loading state — skeletal screen, no spinner ──
   if (!loaded) {
@@ -841,34 +1064,34 @@ function AppContent() {
       <Suspense fallback={<PageLoader />}>
       <Routes>
         {/* Public */}
-        <Route path="/login" element={currentUser ? <Navigate to={getDefaultRoute(currentUser.role)} replace /> : <LoginPage onLogin={handleLogin} />} />
+        <Route path="/login" element={currentUser ? <Navigate to="/dashboard" replace /> : <LoginPage key="login" mode="login" onLogin={handleLogin} />} />
+        <Route path="/signup" element={currentUser ? <Navigate to="/dashboard" replace /> : <LoginPage key="signup" mode="signup" onLogin={handleLogin} />} />
         <Route path="/reset-password" element={<ResetPasswordPage />} />
 
-        {/* ERP routes — SHOP_OWNER */}
-        <Route path="/dashboard" element={currentUser?.role === "SHOP_OWNER" ? <ERPShell><DashboardPage products={products} movements={movements} orders={orders} activeShopId={activeShopId} onNavigate={(p) => navigate("/" + p)} jobCards={jobCards} parties={parties} vehicles={vehicles} /></ERPShell> : <Navigate to={currentUser ? getDefaultRoute(currentUser.role) : "/login"} replace />} />
-        <Route path="/inventory" element={currentUser?.role === "SHOP_OWNER" ? <ERPShell><InventoryPage products={products} movements={movements} activeShopId={activeShopId} onAdd={() => setCatalogModal(true)} onEdit={(p) => setPModal({ open: true, product: p })} onSale={handleSale} onPurchase={handlePurchase} onAdjust={handleAdjustment} toast={toast} /></ERPShell> : <Navigate to={currentUser ? getDefaultRoute(currentUser.role) : "/login"} replace />} />
-        <Route path="/billing" element={currentUser?.role === "SHOP_OWNER" ? <ERPShell><POSBillingPage products={products} activeShopId={activeShopId} onMultiSale={handleMultiItemSale} toast={toast} /></ERPShell> : <Navigate to={currentUser ? getDefaultRoute(currentUser.role) : "/login"} replace />} />
-        <Route path="/parties" element={currentUser?.role === "SHOP_OWNER" ? <ERPShell><PartiesPage parties={parties} movements={movements} vehicles={vehicles} activeShopId={activeShopId} onSaveParty={(p) => { const exists = (parties || []).find((x) => x.id === p.id); saveParties(exists ? parties.map((x) => (x.id === p.id ? p : x)) : [...(parties || []), p]); logAudit(exists ? "PARTY_UPDATED" : "PARTY_CREATED", "party", p.id, p.name); }} onSaveVehicle={(v) => { const exists = (vehicles || []).find((x) => x.id === v.id); saveVehicles(exists ? vehicles.map((x) => (x.id === v.id ? v : x)) : [...(vehicles || []), v]); }} toast={toast} /></ERPShell> : <Navigate to={currentUser ? getDefaultRoute(currentUser.role) : "/login"} replace />} />
-        <Route path="/workshop" element={currentUser?.role === "SHOP_OWNER" ? <ERPShell><WorkshopPage jobCards={jobCards} vehicles={vehicles} parties={parties} products={products} activeShopId={activeShopId} onSaveJobCard={(jc) => { const exists = (jobCards || []).find((x) => x.id === jc.id); saveJobCards(exists ? jobCards.map((x) => (x.id === jc.id ? jc : x)) : [...(jobCards || []), jc]); logAudit(exists ? "JOB_CARD_UPDATED" : "JOB_CARD_CREATED", "job_card", jc.id, `${jc.jobNumber} — ${jc.status}`); }} toast={toast} /></ERPShell> : <Navigate to={currentUser ? getDefaultRoute(currentUser.role) : "/login"} replace />} />
-        <Route path="/history" element={currentUser?.role === "SHOP_OWNER" ? <ERPShell><HistoryPage movements={movements} activeShopId={activeShopId} /></ERPShell> : <Navigate to={currentUser ? getDefaultRoute(currentUser.role) : "/login"} replace />} />
-        <Route path="/reports" element={currentUser?.role === "SHOP_OWNER" ? <ERPShell><ReportsPage movements={movements} products={products} activeShopId={activeShopId} receipts={receipts} saveReceipts={saveReceipts} onPaymentReceipt={handlePaymentReceipt} toast={toast} /></ERPShell> : <Navigate to={currentUser ? getDefaultRoute(currentUser.role) : "/login"} replace />} />
-        <Route path="/orders" element={currentUser?.role === "SHOP_OWNER" ? <ERPShell><OrdersPage /></ERPShell> : <Navigate to={currentUser ? getDefaultRoute(currentUser.role) : "/login"} replace />} />
+        {/* MVP routes */}
+        <Route path="/dashboard" element={currentUser ? <ERPShell><DashboardPage products={products} movements={movements} orders={orders} activeShopId={activeShopId} onNavigate={(p) => navigate("/" + p)} jobCards={jobCards} parties={parties} vehicles={vehicles} /></ERPShell> : <Navigate to="/login" replace />} />
+        <Route path="/inventory" element={currentUser ? <ERPShell><InventoryPage products={products} movements={movements} activeShopId={activeShopId} onAdd={() => setCatalogModal(true)} onEdit={(p) => setPModal({ open: true, product: p })} onSale={handleSale} onPurchase={handlePurchase} onAdjust={handleAdjustment} toast={toast} /></ERPShell> : <Navigate to="/login" replace />} />
+        <Route path="/billing" element={currentUser ? <ERPShell><POSBillingPage products={products} activeShopId={activeShopId} onMultiSale={handleMultiItemSale} toast={toast} /></ERPShell> : <Navigate to="/login" replace />} />
+        <Route path="/history" element={currentUser ? <ERPShell><HistoryPage movements={movements} activeShopId={activeShopId} /></ERPShell> : <Navigate to="/login" replace />} />
+        <Route path="/reports" element={currentUser ? <ERPShell><ReportsPage movements={movements} products={products} activeShopId={activeShopId} receipts={receipts} saveReceipts={saveReceipts} onPaymentReceipt={handlePaymentReceipt} toast={toast} /></ERPShell> : <Navigate to="/login" replace />} />
 
-        {/* Marketplace routes */}
-        <Route path="/marketplace" element={currentUser ? <MPShell><MarketplaceHome /></MPShell> : <Navigate to="/login" replace />} />
-        <Route path="/marketplace/orders" element={currentUser ? <MPShell><OrderTrackingPage onBack={() => navigate("/marketplace")} /></MPShell> : <Navigate to="/login" replace />} />
-        <Route path="/marketplace/pricing" element={currentUser ? <MPShell><PricingPage onBack={() => navigate("/marketplace")} /></MPShell> : <Navigate to="/login" replace />} />
-        <Route path="/marketplace/checkout" element={currentUser ? <MPShell><CheckoutPage onBack={() => navigate("/marketplace")} onOrderPlaced={() => navigate("/marketplace/orders")} /></MPShell> : <Navigate to="/login" replace />} />
+        {/* Out-of-scope routes — redirect into MVP */}
+        <Route path="/parties" element={<Navigate to={currentUser ? "/dashboard" : "/login"} replace />} />
+        <Route path="/workshop" element={<Navigate to={currentUser ? "/dashboard" : "/login"} replace />} />
+        <Route path="/orders" element={<Navigate to={currentUser ? "/dashboard" : "/login"} replace />} />
+        <Route path="/marketplace" element={<Navigate to={currentUser ? "/dashboard" : "/login"} replace />} />
+        <Route path="/marketplace/orders" element={<Navigate to={currentUser ? "/dashboard" : "/login"} replace />} />
+        <Route path="/marketplace/pricing" element={<Navigate to={currentUser ? "/dashboard" : "/login"} replace />} />
+        <Route path="/marketplace/checkout" element={<Navigate to={currentUser ? "/dashboard" : "/login"} replace />} />
+        <Route path="/profile" element={<Navigate to={currentUser ? "/dashboard" : "/login"} replace />} />
+        <Route path="/settings" element={<Navigate to={currentUser ? "/dashboard" : "/login"} replace />} />
+        <Route path="/admin" element={<Navigate to={currentUser ? "/dashboard" : "/login"} replace />} />
 
-        {/* Profile & Settings (authenticated) */}
-        <Route path="/profile" element={currentUser ? <ProfilePage user={currentUser} onUserUpdate={(u) => setCurrentUser(u)} /> : <Navigate to="/login" replace />} />
-        <Route path="/settings" element={currentUser ? <SettingsPage onLogout={handleLogout} /> : <Navigate to="/login" replace />} />
-
-        {/* Admin */}
-        <Route path="/admin" element={currentUser?.role === "PLATFORM_ADMIN" ? <AdminShell><AdminPage /></AdminShell> : <Navigate to={currentUser ? getDefaultRoute(currentUser.role) : "/login"} replace />} />
+        {/* Landing page — always public, logged-in users get an "Open App" nav */}
+        <Route path="/" element={<LandingPage currentUser={currentUser} />} />
 
         {/* Catch-all */}
-        <Route path="*" element={<Navigate to={currentUser ? getDefaultRoute(currentUser.role) : "/login"} replace />} />
+        <Route path="*" element={<Navigate to={currentUser ? "/dashboard" : "/login"} replace />} />
       </Routes>
       </Suspense>
 

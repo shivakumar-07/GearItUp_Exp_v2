@@ -93,6 +93,46 @@ router.post('/', authenticate, requireShopOwner, async (req, res, next) => {
   }
 });
 
+// GET /api/shop/inventory/movements
+// Canonical shop ledger feed used by frontend history sync.
+router.get('/movements', authenticate, requireShopOwner, async (req, res, next) => {
+  try {
+    const rawLimit = parseInt(req.query.limit, 10);
+    const limit = Number.isFinite(rawLimit) ? Math.min(Math.max(rawLimit, 1), 2000) : 1000;
+
+    const where = { shopId: req.shopId };
+    if (req.query.from || req.query.to) {
+      where.createdAt = {};
+      if (req.query.from) {
+        const fromDate = new Date(req.query.from);
+        if (!Number.isNaN(fromDate.getTime())) where.createdAt.gte = fromDate;
+      }
+      if (req.query.to) {
+        const toDate = new Date(req.query.to);
+        if (!Number.isNaN(toDate.getTime())) where.createdAt.lte = toDate;
+      }
+      if (Object.keys(where.createdAt).length === 0) delete where.createdAt;
+    }
+
+    const movements = await prisma.movement.findMany({
+      where,
+      include: {
+        inventory: {
+          include: {
+            masterPart: true,
+          },
+        },
+      },
+      orderBy: { createdAt: 'desc' },
+      take: limit,
+    });
+
+    res.json({ movements });
+  } catch (err) {
+    next(err);
+  }
+});
+
 // PUT /api/shop/inventory/:id
 router.put('/:id', authenticate, requireShopOwner, async (req, res, next) => {
   try {

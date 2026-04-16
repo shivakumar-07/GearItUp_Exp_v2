@@ -25,11 +25,33 @@ const allowedOrigins = (
     : ['http://localhost:5173', 'http://localhost:5174', 'http://localhost:5175']
 );
 
+function createOriginRule(pattern) {
+  if (!pattern.includes('*')) {
+    return { exact: pattern };
+  }
+
+  const regexSource = `^${pattern
+    .split('*')
+    .map((segment) => segment.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
+    .join('.*')}$`;
+
+  return { wildcard: new RegExp(regexSource) };
+}
+
+const allowedOriginRules = allowedOrigins.map(createOriginRule);
+
+function isAllowedOrigin(origin) {
+  return allowedOriginRules.some((rule) => {
+    if (rule.exact) return origin === rule.exact;
+    return rule.wildcard.test(origin);
+  });
+}
+
 app.use(cors({
   origin: (origin, callback) => {
     // Allow non-browser clients and same-origin requests without an Origin header.
     if (!origin) return callback(null, true);
-    if (allowedOrigins.includes(origin)) return callback(null, true);
+    if (isAllowedOrigin(origin)) return callback(null, true);
     return callback(new Error(`CORS blocked for origin: ${origin}`));
   },
   credentials: true,
@@ -59,6 +81,6 @@ app.use((req, res) => res.status(404).json({ error: 'Route not found' }));
 app.use(errorHandler);
 
 app.listen(PORT, () => {
-  console.log(`AutoSpace backend running on http://localhost:${PORT}`);
+  console.log(`redpiston backend running on http://localhost:${PORT}`);
   console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);
 });

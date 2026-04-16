@@ -8,7 +8,8 @@ const router = Router();
 // POST /api/auth/firebase — verify Firebase token, return our JWT
 router.post('/firebase', async (req, res, next) => {
   try {
-    const { firebaseToken, role } = req.body;
+    const { firebaseToken, role, intent } = req.body;
+    const authIntent = intent === 'signup' ? 'signup' : intent === 'login' ? 'login' : 'auto';
     if (!firebaseToken) {
       return res.status(400).json({
         success: false,
@@ -41,6 +42,16 @@ router.post('/firebase', async (req, res, next) => {
       }
 
       if (!user) {
+        if (authIntent === 'login') {
+          return res.status(404).json({
+            success: false,
+            error: {
+              code: 'ACCOUNT_NOT_FOUND',
+              message: 'No account found for this sign-in method. Please sign up first.',
+            },
+          });
+        }
+
         const phoneClean2 = phone_number
           ? phone_number.replace(/^\+91/, '').replace(/^\+/, '')
           : null;

@@ -164,7 +164,7 @@ function SettingsTab({ shops, resetAll }) {
                 </h3>
                 <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
                     {[
-                        { label: "Platform Name", value: "AutoSpace", type: "text" },
+                        { label: "Platform Name", value: "redpiston", type: "text" },
                         { label: "Default Currency", value: "INR (₹)", type: "text" },
                         { label: "GST Rate", value: "18%", type: "text" },
                         { label: "Default Delivery Radius", value: "15 km", type: "text" },

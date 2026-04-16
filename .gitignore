@@ -30,3 +30,5 @@ repomix-output.xml
 
 .claude/
 .env*
+.vercel
+.env*.local

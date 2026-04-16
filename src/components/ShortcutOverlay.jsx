@@ -5,7 +5,6 @@ const SHORTCUTS = [
   { keys: "Ctrl + N", action: "New Sale" },
   { keys: "Ctrl + P", action: "Go to POS" },
   { keys: "Ctrl + I", action: "Go to Inventory" },
-  { keys: "Ctrl + H", action: "Go to History" },
   { keys: "Ctrl + K", action: "Command Palette" },
   { keys: "Ctrl + B", action: "Focus Barcode Input" },
   { keys: "Ctrl + Enter", action: "Submit Bill (POS)" },
